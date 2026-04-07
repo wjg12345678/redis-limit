@@ -117,10 +117,10 @@ std::int64_t now_ms() {
         .count();
 }
 
-ReplyPtr eval_script(RedisConnection& conn,
-                     const std::string& script,
-                     const std::vector<std::string>& keys,
-                     const std::vector<std::string>& args) {
+RedisReplyPtr eval_script(RedisConnection& conn,
+                          const std::string& script,
+                          const std::vector<std::string>& keys,
+                          const std::vector<std::string>& args) {
     std::vector<std::string> parts;
     parts.reserve(3 + keys.size() + args.size());
     parts.emplace_back("EVAL");
