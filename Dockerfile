@@ -6,9 +6,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libhiredis-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir pybind11
-
 WORKDIR /app
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 COPY CMakeLists.txt ./
 COPY include/ include/
 COPY src/ src/
@@ -24,7 +24,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 COPY --from=builder /app/build/redis_limiter*.so ./
 COPY examples/ examples/
 
-CMD ["python3", "examples/python_demo.py"]
+EXPOSE 8000
+
+CMD ["uvicorn", "examples.fastapi_demo:app", "--host", "0.0.0.0", "--port", "8000"]

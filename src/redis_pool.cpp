@@ -167,8 +167,13 @@ bool RedisPool::health_check() {
             temp.push(std::move(conn));
             stats_.total_connections++;
         } else {
+            healthy = false;
             break;
         }
+    }
+
+    if (temp.size() < static_cast<size_t>(config_.pool_size)) {
+        healthy = false;
     }
 
     pool_ = std::move(temp);
