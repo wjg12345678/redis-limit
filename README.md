@@ -20,6 +20,10 @@
 - [调用流程](#8-调用流程)
 - [构建方式](#11-构建方式)
 - [Python 使用示例](#12-python-使用示例)
+- [新增功能](#123-新增功能)
+- [功能验证](#124-功能验证)
+- [压测](#125-压测)
+- [测试与压测结果](#126-测试与压测结果)
 
 ## 快速开始
 
@@ -85,6 +89,7 @@ cmake --build build
 .
 ├── CMakeLists.txt
 ├── README.md
+├── docker-compose.yml
 ├── include/
 │   ├── redis_pool.hpp
 │   └── sliding_window_limiter.hpp
@@ -92,6 +97,9 @@ cmake --build build
 │   ├── redis_pool.cpp
 │   ├── sliding_window_limiter.cpp
 │   └── python_binding.cpp
+├── tests/
+│   ├── benchmark.py
+│   └── verify_functionality.py
 └── examples/
     └── python_demo.py
 ```
@@ -141,6 +149,19 @@ cmake --build build
 
 - [examples/python_demo.py](/Users/mac/Desktop/redis-rate-limiter/examples/python_demo.py)
   演示如何从 Python 中创建 Redis 连接池并调用限流器
+
+### `tests/`
+
+放验证脚本和压测脚本。
+
+- [tests/verify_functionality.py](/Users/mac/Desktop/redis-rate-limiter/tests/verify_functionality.py)
+  验证 Redis 正常限流和 Redis 故障降级
+- [tests/benchmark.py](/Users/mac/Desktop/redis-rate-limiter/tests/benchmark.py)
+  提供吞吐压测和限流有效性压测
+
+### `docker-compose.yml`
+
+定义本地 Redis、示例运行环境、测试服务和压测服务。
 
 ### `CMakeLists.txt`
 
@@ -495,6 +516,207 @@ result = limiter.allow("sms:user:42")
 print(result.allowed, result.remaining, result.retry_after_ms)
 print(limiter.redis_error_count(), limiter.fallback_hit_count())
 ```
+
+---
+
+## 12.3 新增功能
+
+这次补充的工程化能力包括：
+
+- 增加 Docker Compose `test` 服务，可直接在容器内执行功能验证
+- 增加 [tests/verify_functionality.py](/Users/mac/Desktop/redis-rate-limiter/tests/verify_functionality.py)，覆盖正常限流和 Redis 故障降级
+- 增加 Docker Compose `bench` 服务，可直接在容器内执行压测
+- 增加 [tests/benchmark.py](/Users/mac/Desktop/redis-rate-limiter/tests/benchmark.py)，支持吞吐压测和限流有效性压测
+- 增加限流有效性断言能力，可直接判断是否发生超发
+
+这些能力的目标不是改限流核心逻辑，而是补齐“怎么验证它真的工作”和“怎么证明它没有超发”。
+
+---
+
+## 12.4 功能验证
+
+先构建测试镜像并启动 Redis：
+
+```bash
+docker compose build
+docker compose up -d redis
+```
+
+验证 Redis 正常时的令牌桶限流：
+
+```bash
+docker compose run --rm test remote
+```
+
+预期结果：
+
+- 输出 `PASS remote token bucket`
+- 前 3 次请求允许通过，第 4 次请求被拒绝
+- 被拒绝的请求 `retry_after_ms > 0`
+
+验证 Redis 故障时的本地降级：
+
+```bash
+docker compose run --rm -e REDIS_HOST=redis-unavailable test fallback
+```
+
+预期结果：
+
+- 输出 `PASS resilient fallback`
+- 本地降级路径表现为前 2 次允许，第 3 次拒绝
+- `redis_error_count > 0`
+- `fallback_hit_count = 3`
+
+---
+
+## 12.5 压测
+
+先构建镜像并启动 Redis：
+
+```bash
+docker compose build
+docker compose up -d redis
+```
+
+压测分布式令牌桶吞吐：
+
+```bash
+docker compose run --rm bench --workers 4 --duration 10
+```
+
+压测同一个热点 key 的竞争场景：
+
+```bash
+docker compose run --rm bench --workers 4 --duration 10 --shared-key
+```
+
+压测限流有效性：
+
+```bash
+docker compose run --rm bench \
+  --mode effectiveness \
+  --workers 4 \
+  --duration 10 \
+  --shared-key \
+  --max-tokens 20 \
+  --refill-rate 5
+```
+
+压测并断言“不允许超发”：
+
+```bash
+docker compose run --rm bench \
+  --mode effectiveness \
+  --workers 4 \
+  --duration 10 \
+  --shared-key \
+  --max-tokens 20 \
+  --refill-rate 5 \
+  --max-over-issue 0 \
+  --max-over-issue-ratio 0
+```
+
+输出指标包括：
+
+- `requests`：总请求数
+- `qps`：平均吞吐
+- `errors`：执行异常数
+- `latency_us avg/p50/p95/p99`：采样延迟
+- `theoretical_allowed`：理论最大放行数
+- `actual_allowed`：实际放行数
+- `over_issued`：超发量，越接近 `0` 越好
+- `over_issued_ratio`：超发比例
+- `denied_ratio`：拒绝比例
+
+默认会把 `max_tokens` 和 `refill_rate` 设得很高，尽量测吞吐而不是测限流拒绝率。
+
+---
+
+## 12.6 测试与压测结果
+
+下面是本仓库在 `2026-04-10` 实际跑出的结果。
+
+### 12.6.1 功能验证结果
+
+Redis 正常时的令牌桶验证：
+
+```text
+PASS remote token bucket
+  req=1 allowed=True remaining=2 retry_after_ms=0
+  req=2 allowed=True remaining=1 retry_after_ms=0
+  req=3 allowed=True remaining=0 retry_after_ms=0
+  req=4 allowed=False remaining=0 retry_after_ms=1957
+```
+
+结论：
+
+- 前 3 次请求被允许
+- 第 4 次请求被拒绝
+- 被拒绝请求包含有效的 `retry_after_ms`
+- 基础限流路径工作正常
+
+Redis 不可用时的降级验证：
+
+```text
+PASS resilient fallback
+  redis_error_count=3 fallback_hit_count=3
+  req=1 allowed=True remaining=1 retry_after_ms=0
+  req=2 allowed=True remaining=0 retry_after_ms=0
+  req=3 allowed=False remaining=0 retry_after_ms=89999
+```
+
+结论：
+
+- Redis 异常时成功进入本地令牌桶降级
+- 降级命中次数和 Redis 错误计数符合预期
+- 降级后仍然维持了单机限流保护
+
+### 12.6.2 吞吐压测结果
+
+4 个 worker，5 秒，独立 key：
+
+```text
+workers=4 duration_s=5.00 shared_key=False
+requests=62945 allowed=62945 denied=0 errors=0 qps=12589.00
+latency_us avg=316.24 p50=290.02 p95=571.30 p99=823.68
+```
+
+4 个 worker，5 秒，共享热点 key：
+
+```text
+workers=4 duration_s=5.00 shared_key=True
+requests=64957 allowed=64957 denied=0 errors=0 qps=12991.40
+latency_us avg=304.11 p50=295.77 p95=447.45 p99=751.25
+```
+
+结论：
+
+- 当前容器环境下，令牌桶调用吞吐在约 `12.6k` 到 `13.0k QPS`
+- 热点 key 场景下没有观察到异常错误或明显的延迟失控
+- 这组压测参数主要用于看吞吐，不用于判断限流是否严格生效
+
+### 12.6.3 限流有效性压测结果
+
+4 个 worker，5 秒，共享热点 key，`max_tokens=20`，`refill_rate=5`：
+
+```text
+workers=4 duration_s=5.00 shared_key=True
+requests=63700 allowed=45 denied=63655 errors=0 qps=12740.00
+effectiveness theoretical_allowed=45.00 actual_allowed=45 over_issued=0.00
+effectiveness over_issued_ratio=0.000000 max_over_issue=0.00 max_over_issue_ratio=0.000000
+effectiveness allowed_ratio=0.0007 denied_ratio=0.9993
+PASS effectiveness assertion
+latency_us avg=315.67 p50=300.78 p95=484.52 p99=729.04
+```
+
+结论：
+
+- 理论最大放行数为 `45`
+- 实际放行数也是 `45`
+- `over_issued=0.00`
+- 严格断言模式返回 `PASS effectiveness assertion`
+
+这说明在上述参数下，Redis 令牌桶没有出现超发，限流有效性符合预期。
 
 ---
 
