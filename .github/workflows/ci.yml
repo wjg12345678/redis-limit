@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker compose build
+
+      - name: Start Redis
+        run: docker compose up -d redis
+
+      - name: Run functionality checks
+        run: |
+          docker compose run --rm test remote
+          docker compose run --rm -e REDIS_HOST=redis-unavailable test fallback
+
+      - name: Run pytest suite
+        run: docker compose run --rm pytest
+
+      - name: Run limiter effectiveness assertion
+        run: >
+          docker compose run --rm bench
+          --mode effectiveness
+          --workers 4
+          --duration 5
+          --shared-key
+          --max-tokens 20
+          --refill-rate 5
+          --max-over-issue 0
+          --max-over-issue-ratio 0
+
+      - name: Stop services
+        if: always()
+        run: docker compose down -v
