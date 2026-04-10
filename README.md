@@ -24,6 +24,12 @@
 - [功能验证](#124-功能验证)
 - [压测](#125-压测)
 - [测试与压测结果](#126-测试与压测结果)
+- [FastAPI Demo](#127-fastapi-demo)
+- [CI](#128-ci)
+- [架构图](#129-架构图)
+- [简历描述](#1210-简历描述)
+- [Benchmark Report](#1211-benchmark-report)
+- [Prometheus 与 Grafana](#1212-prometheus-与-grafana)
 
 ## 快速开始
 
@@ -68,6 +74,7 @@ cmake --build build
 - 同时实现滑动窗口和令牌桶两种限流算法，便于对比不同场景下的策略选择
 - 通过 `pybind11` 提供 Python 调用接口，方便接入 Python 服务
 - 提供 Redis 故障降级方案，在 Redis 不可用时支持本地限流、放行或拒绝
+- 提供 FastAPI demo、Prometheus 风格指标、`pytest`、CI 和压测断言，形成完整工程闭环
 
 ---
 
@@ -90,6 +97,7 @@ cmake --build build
 ├── CMakeLists.txt
 ├── README.md
 ├── docker-compose.yml
+├── requirements.txt
 ├── include/
 │   ├── redis_pool.hpp
 │   └── sliding_window_limiter.hpp
@@ -97,10 +105,15 @@ cmake --build build
 │   ├── redis_pool.cpp
 │   ├── sliding_window_limiter.cpp
 │   └── python_binding.cpp
+├── .github/
+│   └── workflows/
+│       └── ci.yml
 ├── tests/
 │   ├── benchmark.py
+│   ├── test_integration.py
 │   └── verify_functionality.py
 └── examples/
+    ├── fastapi_demo.py
     └── python_demo.py
 ```
 
@@ -149,6 +162,8 @@ cmake --build build
 
 - [examples/python_demo.py](/Users/mac/Desktop/redis-rate-limiter/examples/python_demo.py)
   演示如何从 Python 中创建 Redis 连接池并调用限流器
+- [examples/fastapi_demo.py](/Users/mac/Desktop/redis-rate-limiter/examples/fastapi_demo.py)
+  演示如何把限流器接入 FastAPI 接口
 
 ### `tests/`
 
@@ -156,12 +171,22 @@ cmake --build build
 
 - [tests/verify_functionality.py](/Users/mac/Desktop/redis-rate-limiter/tests/verify_functionality.py)
   验证 Redis 正常限流和 Redis 故障降级
+- [tests/test_integration.py](/Users/mac/Desktop/redis-rate-limiter/tests/test_integration.py)
+  使用 `pytest` 覆盖 Redis 令牌桶、故障降级和 FastAPI 集成
 - [tests/benchmark.py](/Users/mac/Desktop/redis-rate-limiter/tests/benchmark.py)
   提供吞吐压测和限流有效性压测
 
 ### `docker-compose.yml`
 
 定义本地 Redis、示例运行环境、测试服务和压测服务。
+
+### `.github/workflows/ci.yml`
+
+定义 GitHub Actions 流水线，自动执行构建、功能验证、`pytest` 和限流有效性断言。
+
+### `prometheus/` 和 `grafana/`
+
+定义监控抓取配置、Grafana 数据源、dashboard provisioning 和预置看板。
 
 ### `CMakeLists.txt`
 
@@ -523,11 +548,15 @@ print(limiter.redis_error_count(), limiter.fallback_hit_count())
 
 这次补充的工程化能力包括：
 
+- 增加 [examples/fastapi_demo.py](/Users/mac/Desktop/redis-rate-limiter/examples/fastapi_demo.py)，提供真实 HTTP 接入示例
 - 增加 Docker Compose `test` 服务，可直接在容器内执行功能验证
+- 增加 Docker Compose `pytest` 服务，可直接执行集成测试
 - 增加 [tests/verify_functionality.py](/Users/mac/Desktop/redis-rate-limiter/tests/verify_functionality.py)，覆盖正常限流和 Redis 故障降级
+- 增加 [tests/test_integration.py](/Users/mac/Desktop/redis-rate-limiter/tests/test_integration.py)，覆盖 FastAPI 接入和限流行为
 - 增加 Docker Compose `bench` 服务，可直接在容器内执行压测
 - 增加 [tests/benchmark.py](/Users/mac/Desktop/redis-rate-limiter/tests/benchmark.py)，支持吞吐压测和限流有效性压测
 - 增加限流有效性断言能力，可直接判断是否发生超发
+- 增加 [.github/workflows/ci.yml](/Users/mac/Desktop/redis-rate-limiter/.github/workflows/ci.yml)，自动执行 build、test、bench
 
 这些能力的目标不是改限流核心逻辑，而是补齐“怎么验证它真的工作”和“怎么证明它没有超发”。
 
@@ -566,6 +595,19 @@ docker compose run --rm -e REDIS_HOST=redis-unavailable test fallback
 - 本地降级路径表现为前 2 次允许，第 3 次拒绝
 - `redis_error_count > 0`
 - `fallback_hit_count = 3`
+
+运行 `pytest` 集成测试：
+
+```bash
+docker compose run --rm pytest
+```
+
+覆盖范围：
+
+- 令牌桶容量耗尽后拒绝请求
+- Redis 不可用时自动进入本地降级
+- FastAPI `/healthz` 和 `/rate-limit/check` 接口
+- FastAPI 接口在 Redis 故障时暴露降级状态
 
 ---
 
@@ -645,7 +687,7 @@ PASS remote token bucket
   req=1 allowed=True remaining=2 retry_after_ms=0
   req=2 allowed=True remaining=1 retry_after_ms=0
   req=3 allowed=True remaining=0 retry_after_ms=0
-  req=4 allowed=False remaining=0 retry_after_ms=1957
+  req=4 allowed=False remaining=0 retry_after_ms=1999
 ```
 
 结论：
@@ -662,7 +704,7 @@ PASS resilient fallback
   redis_error_count=3 fallback_hit_count=3
   req=1 allowed=True remaining=1 retry_after_ms=0
   req=2 allowed=True remaining=0 retry_after_ms=0
-  req=3 allowed=False remaining=0 retry_after_ms=89999
+  req=3 allowed=False remaining=0 retry_after_ms=89983
 ```
 
 结论：
@@ -671,7 +713,33 @@ PASS resilient fallback
 - 降级命中次数和 Redis 错误计数符合预期
 - 降级后仍然维持了单机限流保护
 
+`pytest` 集成测试结果：
+
+```text
+5 passed in 71.06s (0:01:11)
+```
+
+结论：
+
+- HTTP demo、基础限流、故障降级、指标导出四条主路径都已经纳入回归测试
+- 当前镜像下，`pytest` 集成测试全部通过
+
 ### 12.6.2 吞吐压测结果
+
+汇总表：
+
+| 场景 | Workers | 时长 | 总请求数 | QPS | Avg 延迟(us) | P95(us) | P99(us) | Errors |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 独立 key | 4 | 5s | 62945 | 12589.00 | 316.24 | 571.30 | 823.68 | 0 |
+| 热点 key | 4 | 5s | 64957 | 12991.40 | 304.11 | 447.45 | 751.25 | 0 |
+
+QPS 对比图：
+
+![TokenBucket Throughput Comparison](./assets/charts/throughput-qps.svg)
+
+P95 延迟对比图：
+
+![TokenBucket P95 Latency](./assets/charts/throughput-p95.svg)
 
 4 个 worker，5 秒，独立 key：
 
@@ -694,19 +762,34 @@ latency_us avg=304.11 p50=295.77 p95=447.45 p99=751.25
 - 当前容器环境下，令牌桶调用吞吐在约 `12.6k` 到 `13.0k QPS`
 - 热点 key 场景下没有观察到异常错误或明显的延迟失控
 - 这组压测参数主要用于看吞吐，不用于判断限流是否严格生效
+- 当前这组数据里，共享热点 key 没有比独立 key 更差，说明瓶颈暂时不在 Redis key 冲突上
 
 ### 12.6.3 限流有效性压测结果
+
+汇总表：
+
+| 场景 | Workers | 时长 | Max Tokens | Refill Rate | 理论放行 | 实际放行 | 超发量 | 超发比例 | 拒绝率 | 断言结果 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 热点 key 有效性压测 | 4 | 5s | 20 | 5/s | 45.00 | 45 | 0.00 | 0.000000 | 0.9991 | PASS |
+
+限流效果图：
+
+![Limiter Effectiveness](./assets/charts/effectiveness-bars.svg)
+
+请求结果占比图：
+
+![Allowed vs Denied](./assets/charts/effectiveness-pie.svg)
 
 4 个 worker，5 秒，共享热点 key，`max_tokens=20`，`refill_rate=5`：
 
 ```text
 workers=4 duration_s=5.00 shared_key=True
-requests=63700 allowed=45 denied=63655 errors=0 qps=12740.00
+requests=47560 allowed=45 denied=47515 errors=0 qps=9512.00
 effectiveness theoretical_allowed=45.00 actual_allowed=45 over_issued=0.00
 effectiveness over_issued_ratio=0.000000 max_over_issue=0.00 max_over_issue_ratio=0.000000
-effectiveness allowed_ratio=0.0007 denied_ratio=0.9993
+effectiveness allowed_ratio=0.0009 denied_ratio=0.9991
 PASS effectiveness assertion
-latency_us avg=315.67 p50=300.78 p95=484.52 p99=729.04
+latency_us avg=427.13 p50=352.07 p95=846.10 p99=1634.98
 ```
 
 结论：
@@ -715,8 +798,224 @@ latency_us avg=315.67 p50=300.78 p95=484.52 p99=729.04
 - 实际放行数也是 `45`
 - `over_issued=0.00`
 - 严格断言模式返回 `PASS effectiveness assertion`
+- 在高并发热点 key 压力下没有出现超发，说明 Lua + Redis 的原子扣减逻辑是有效的
 
 这说明在上述参数下，Redis 令牌桶没有出现超发，限流有效性符合预期。
+
+---
+
+## 12.7 FastAPI Demo
+
+这个 demo 的目的是把组件从“库”变成“可接入业务的服务”。
+
+启动方式：
+
+```bash
+docker compose up -d app
+```
+
+健康检查：
+
+```bash
+curl -sS http://127.0.0.1:8000/healthz
+```
+
+请求限流接口：
+
+```bash
+curl -sS http://127.0.0.1:8000/rate-limit/check \
+  -H 'Content-Type: application/json' \
+  -d '{"key":"login:user:123","tokens_needed":1}'
+```
+
+接口说明：
+
+- `GET /healthz`
+  返回 Redis 是否健康、当前降级模式
+- `GET /metrics`
+  返回 Prometheus 风格指标，包括请求总数、允许数、拒绝数、Redis 错误数、降级次数和耗时累计
+- `POST /rate-limit/check`
+  返回 `allowed`、`remaining`、`retry_after_ms`、`redis_error_count`、`fallback_hit_count`
+
+查看指标：
+
+```bash
+curl -sS http://127.0.0.1:8000/metrics
+```
+
+指标示例：
+
+```text
+demo_rate_limit_requests_total 0
+demo_rate_limit_allowed_total 0
+demo_rate_limit_denied_total 0
+demo_redis_health 1
+```
+
+实际验证结果：
+
+```text
+{"ok":true,"redis_healthy":true,"fallback_mode":"LocalTokenBucket"}
+```
+
+这个 demo 适合在秋招里讲“我是怎么把底层限流组件接到 Python Web 服务里的”。
+
+---
+
+## 12.8 CI
+
+CI 配置文件在 [.github/workflows/ci.yml](/Users/mac/Desktop/redis-rate-limiter/.github/workflows/ci.yml)，当前流水线会自动执行：
+
+- `docker compose build`
+- `docker compose run --rm test remote`
+- `docker compose run --rm -e REDIS_HOST=redis-unavailable test fallback`
+- `docker compose run --rm pytest`
+- `docker compose run --rm bench --mode effectiveness ... --max-over-issue 0`
+
+这部分的意义是把项目从“手工验证”提升到“提交代码就能自动验证”。
+
+---
+
+## 12.9 架构图
+
+```text
+                +------------------------+
+                |  FastAPI Demo Service  |
+                | /healthz /metrics      |
+                | /rate-limit/check      |
+                +-----------+------------+
+                            |
+                            v
+                +------------------------+
+                |   pybind11 bindings    |
+                |   redis_limiter.so     |
+                +-----------+------------+
+                            |
+                            v
+        +---------------------------------------------+
+        |              C++ Rate Limiter               |
+        | SlidingWindow / TokenBucket / Resilient TB  |
+        +----------------------+----------------------+
+                               |
+                               v
+                    +----------------------+
+                    |   RedisPool (C++)    |
+                    | connection reuse     |
+                    | health check         |
+                    +----------+-----------+
+                               |
+                               v
+                    +----------------------+
+                    |        Redis         |
+                    | Lua atomic scripts   |
+                    +----------------------+
+
+Redis 不可用时：
+FastAPI -> ResilientTokenBucketLimiter -> LocalTokenBucket fallback
+```
+
+这张图适合面试时讲三件事：
+
+- Python 服务怎么接入 C++ 扩展
+- Lua + Redis 为什么能保证原子扣减
+- Redis 异常时为什么还能保留单机限流保护
+
+---
+
+## 12.10 简历描述
+
+简历版项目描述可以直接写：
+
+- 基于 `C++17 + hiredis + Redis Lua + pybind11` 实现分布式限流组件，支持滑动窗口、令牌桶和 Redis 故障降级，并提供 Python 服务接入能力。
+- 设计 `ResilientTokenBucketLimiter`，在 Redis 不可用时自动切换本地令牌桶，平衡全局一致性与服务可用性。
+- 封装 FastAPI demo、`pytest` 集成测试、GitHub Actions 和 Docker Compose 验证链路，补齐从组件实现到业务接入、回归测试、性能验证的工程闭环。
+- 在 4 worker、热点 key 的严格有效性压测下，理论放行 `45` 次、实际放行 `45` 次，`over_issued=0`，验证分布式限流逻辑未发生超发。
+
+如果你想写成更短的秋招 bullet，可以压缩成：
+
+- 实现基于 Redis Lua 的分布式限流组件，支持滑动窗口、令牌桶、Python 接入与 Redis 故障降级。
+- 使用 C++ 封装 Redis 连接池并通过 pybind11 暴露给 FastAPI 服务，在热点 key 压测下验证限流无超发。
+- 补齐 Docker、pytest、CI、压测断言和指标导出，形成完整的工程化中间件项目。
+
+如果你要写在项目标题或面试开场里，可以直接用这句：
+
+> 这是一个面向 Python 后端服务的 Redis 分布式限流中间件，核心特点是分布式共享配额、Redis 故障降级、可观测性和完整的测试压测闭环。
+
+建议项目标签：
+
+- `C++`
+- `Redis`
+- `Lua`
+- `pybind11`
+- `FastAPI`
+- `Prometheus`
+- `Grafana`
+- `Docker`
+- `CI/CD`
+
+---
+
+## 12.11 Benchmark Report
+
+仓库内提供了一页版 benchmark report：
+
+- [reports/benchmark-report.md](/Users/mac/Desktop/redis-rate-limiter/reports/benchmark-report.md)
+- [reports/benchmark-report.html](/Users/mac/Desktop/redis-rate-limiter/reports/benchmark-report.html)
+
+适合用途：
+
+- 单独发给面试官看性能结果
+- 做 GitHub 项目展示入口
+- 截图放进简历或项目汇报材料
+- 直接浏览或打印导出 PDF
+
+---
+
+## 12.12 Prometheus 与 Grafana
+
+项目现在支持完整的本地可观测性链路：
+
+- Prometheus 抓取 FastAPI `/metrics`
+- Grafana 自动加载 Prometheus 数据源
+- Grafana 自动加载预置 dashboard
+
+启动方式：
+
+```bash
+docker compose up -d redis app prometheus grafana
+```
+
+访问地址：
+
+- FastAPI: `http://127.0.0.1:8000`
+- Prometheus: `http://127.0.0.1:9090`
+- Grafana: `http://127.0.0.1:3000`
+
+Grafana 默认登录：
+
+- 用户名：`admin`
+- 密码：`admin`
+
+预置 dashboard：
+
+- `Redis Rate Limiter Overview`
+
+Dashboard 主要观察：
+
+- Redis 健康状态
+- 当前 fallback mode
+- 每秒请求数 / 允许数 / 拒绝数
+- 平均请求耗时
+- Redis 错误数与降级命中次数
+
+相关文件：
+
+- [prometheus/prometheus.yml](/Users/mac/Desktop/redis-rate-limiter/prometheus/prometheus.yml)
+- [grafana/provisioning/datasources/prometheus.yml](/Users/mac/Desktop/redis-rate-limiter/grafana/provisioning/datasources/prometheus.yml)
+- [grafana/provisioning/dashboards/dashboard.yml](/Users/mac/Desktop/redis-rate-limiter/grafana/provisioning/dashboards/dashboard.yml)
+- [grafana/dashboards/redis-rate-limiter-dashboard.json](/Users/mac/Desktop/redis-rate-limiter/grafana/dashboards/redis-rate-limiter-dashboard.json)
+
+这部分的价值在于，它把“有 metrics”提升成“能看 dashboard、能做现场演示、能讲可观测性闭环”。
 
 ---
 
