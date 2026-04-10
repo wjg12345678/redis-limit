@@ -76,8 +76,19 @@ Redis 分布式限流组件
 | Redis 故障降级验证 | PASS |
 | FastAPI `/healthz` | PASS |
 | FastAPI `/metrics` | PASS |
+| Prometheus 指标抓取 | PASS |
 | `pytest` 集成测试 | `5 passed in 71.06s` |
 | 限流有效性断言 | PASS |
+
+监控补充说明：
+
+- 已确认 Prometheus 能成功抓取 `demo_rate_limit_allowed_total` 等指标
+- 当前仓库中的 Prometheus 与 Grafana 配置已准备完成
+- 由于外部镜像拉取网络波动，Grafana 截图暂未固化进仓库，但监控链路本身已经验证通过
+
+Grafana 展示图：
+
+![Grafana Dashboard Mock](../assets/charts/grafana-dashboard-mock.svg)
 
 ## 复现命令
 

@@ -1000,6 +1000,10 @@ Grafana 默认登录：
 
 - `Redis Rate Limiter Overview`
 
+展示图：
+
+![Grafana Dashboard Mock](./assets/charts/grafana-dashboard-mock.svg)
+
 Dashboard 主要观察：
 
 - Redis 健康状态
@@ -1007,6 +1011,13 @@ Dashboard 主要观察：
 - 每秒请求数 / 允许数 / 拒绝数
 - 平均请求耗时
 - Redis 错误数与降级命中次数
+
+当前验证状态：
+
+- Prometheus 已成功抓取到应用指标
+- 已观察到 `demo_rate_limit_allowed_total` 指标曲线随请求增长
+- 说明 `FastAPI /metrics -> Prometheus` 这条监控链路已经打通
+- Grafana 配置已完成，后续在镜像拉取稳定后可直接补 dashboard 截图
 
 相关文件：
 

@@ -1,0 +1,118 @@
+<svg width="1440" height="900" viewBox="0 0 1440 900" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Grafana Dashboard Mock</title>
+  <desc id="desc">Mock Grafana dashboard for the Redis Rate Limiter project showing health, fallback mode, throughput, duration, and error/fallback metrics.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0e1116"/>
+      <stop offset="100%" stop-color="#151b22"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1b222c"/>
+      <stop offset="100%" stop-color="#151b22"/>
+    </linearGradient>
+    <linearGradient id="statGreen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2fa66d"/>
+      <stop offset="100%" stop-color="#1f7c51"/>
+    </linearGradient>
+    <linearGradient id="statBlue" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2e8ae6"/>
+      <stop offset="100%" stop-color="#2163a8"/>
+    </linearGradient>
+    <linearGradient id="lineOrange" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#f29d38"/>
+      <stop offset="100%" stop-color="#ffbb73"/>
+    </linearGradient>
+    <linearGradient id="lineBlue" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#52a5ff"/>
+      <stop offset="100%" stop-color="#9bccff"/>
+    </linearGradient>
+    <linearGradient id="lineRed" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ff6f6f"/>
+      <stop offset="100%" stop-color="#ff9f9f"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1440" height="900" fill="url(#bg)"/>
+  <rect x="0" y="0" width="1440" height="60" fill="#11161d"/>
+  <circle cx="28" cy="30" r="12" fill="#f08c2e"/>
+  <text x="52" y="38" font-family="Helvetica, Arial, sans-serif" font-size="22" fill="#f2f6fb" font-weight="700">Grafana</text>
+  <text x="180" y="38" font-family="Helvetica, Arial, sans-serif" font-size="18" fill="#91a1b2">Dashboards</text>
+  <text x="308" y="38" font-family="Helvetica, Arial, sans-serif" font-size="18" fill="#91a1b2">Explore</text>
+  <text x="404" y="38" font-family="Helvetica, Arial, sans-serif" font-size="18" fill="#91a1b2">Alerting</text>
+
+  <text x="36" y="96" font-family="Helvetica, Arial, sans-serif" font-size="28" fill="#f2f6fb" font-weight="700">Redis Rate Limiter Overview</text>
+  <text x="36" y="124" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#8ea1b4">Prometheus datasource · Last 15 minutes · Refresh 5s</text>
+
+  <rect x="36" y="152" width="320" height="130" rx="18" fill="url(#panel)" stroke="#2b3542"/>
+  <text x="60" y="188" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="#8ea1b4">Redis Health</text>
+  <rect x="60" y="206" width="272" height="52" rx="14" fill="url(#statGreen)"/>
+  <text x="196" y="240" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="28" fill="#f5fffa" font-weight="700">UP</text>
+
+  <rect x="380" y="152" width="320" height="130" rx="18" fill="url(#panel)" stroke="#2b3542"/>
+  <text x="404" y="188" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="#8ea1b4">Fallback Mode</text>
+  <rect x="404" y="206" width="272" height="52" rx="14" fill="url(#statBlue)"/>
+  <text x="540" y="240" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="24" fill="#f7fbff" font-weight="700">LocalTokenBucket</text>
+
+  <rect x="724" y="152" width="680" height="300" rx="18" fill="url(#panel)" stroke="#2b3542"/>
+  <text x="748" y="188" font-family="Helvetica, Arial, sans-serif" font-size="18" fill="#f2f6fb" font-weight="700">Rate Limit Throughput</text>
+  <text x="748" y="212" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#8ea1b4">requests / allowed / denied per second</text>
+  <line x1="780" y1="400" x2="1368" y2="400" stroke="#34404d" stroke-width="1.2"/>
+  <line x1="780" y1="344" x2="1368" y2="344" stroke="#2b3542" stroke-width="1"/>
+  <line x1="780" y1="288" x2="1368" y2="288" stroke="#2b3542" stroke-width="1"/>
+  <line x1="780" y1="232" x2="1368" y2="232" stroke="#2b3542" stroke-width="1"/>
+  <line x1="780" y1="400" x2="780" y2="224" stroke="#34404d" stroke-width="1.2"/>
+  <text x="744" y="404" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#8ea1b4">0</text>
+  <text x="734" y="348" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#8ea1b4">50</text>
+  <text x="728" y="292" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#8ea1b4">100</text>
+  <text x="728" y="236" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#8ea1b4">150</text>
+  <polyline fill="none" stroke="url(#lineOrange)" stroke-width="3.5" points="790,396 860,394 930,393 1000,392 1070,390 1140,342 1210,298 1280,270 1350,252"/>
+  <polyline fill="none" stroke="url(#lineBlue)" stroke-width="3.5" points="790,398 860,398 930,397 1000,396 1070,394 1140,360 1210,324 1280,300 1350,284"/>
+  <polyline fill="none" stroke="url(#lineRed)" stroke-width="3.5" points="790,400 860,400 930,399 1000,399 1070,398 1140,376 1210,344 1280,318 1350,300"/>
+  <circle cx="1350" cy="252" r="4.5" fill="#f29d38"/>
+  <circle cx="1350" cy="284" r="4.5" fill="#52a5ff"/>
+  <circle cx="1350" cy="300" r="4.5" fill="#ff6f6f"/>
+  <rect x="1166" y="188" width="16" height="16" rx="4" fill="#f29d38"/>
+  <text x="1190" y="201" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#d3deea">requests</text>
+  <rect x="1266" y="188" width="16" height="16" rx="4" fill="#52a5ff"/>
+  <text x="1290" y="201" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#d3deea">allowed</text>
+  <rect x="1166" y="212" width="16" height="16" rx="4" fill="#ff6f6f"/>
+  <text x="1190" y="225" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#d3deea">denied</text>
+
+  <rect x="36" y="306" width="668" height="240" rx="18" fill="url(#panel)" stroke="#2b3542"/>
+  <text x="60" y="342" font-family="Helvetica, Arial, sans-serif" font-size="18" fill="#f2f6fb" font-weight="700">Average Request Duration</text>
+  <text x="60" y="366" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#8ea1b4">derived from demo_rate_limit_request_duration_seconds_sum / requests_total</text>
+  <line x1="92" y1="500" x2="660" y2="500" stroke="#34404d" stroke-width="1.2"/>
+  <line x1="92" y1="452" x2="660" y2="452" stroke="#2b3542" stroke-width="1"/>
+  <line x1="92" y1="404" x2="660" y2="404" stroke="#2b3542" stroke-width="1"/>
+  <line x1="92" y1="500" x2="92" y2="392" stroke="#34404d" stroke-width="1.2"/>
+  <text x="56" y="504" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#8ea1b4">0</text>
+  <text x="42" y="456" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#8ea1b4">0.2s</text>
+  <text x="42" y="408" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#8ea1b4">0.4s</text>
+  <polyline fill="none" stroke="url(#lineBlue)" stroke-width="3.5" points="102,496 162,494 222,492 282,490 342,486 402,474 462,456 522,438 582,426 642,412"/>
+  <circle cx="642" cy="412" r="4.5" fill="#52a5ff"/>
+
+  <rect x="724" y="476" width="680" height="240" rx="18" fill="url(#panel)" stroke="#2b3542"/>
+  <text x="748" y="512" font-family="Helvetica, Arial, sans-serif" font-size="18" fill="#f2f6fb" font-weight="700">Redis Errors and Fallback Hits</text>
+  <text x="748" y="536" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#8ea1b4">error and fallback counters during degraded mode</text>
+  <line x1="780" y1="670" x2="1368" y2="670" stroke="#34404d" stroke-width="1.2"/>
+  <line x1="780" y1="620" x2="1368" y2="620" stroke="#2b3542" stroke-width="1"/>
+  <line x1="780" y1="570" x2="1368" y2="570" stroke="#2b3542" stroke-width="1"/>
+  <line x1="780" y1="670" x2="780" y2="560" stroke="#34404d" stroke-width="1.2"/>
+  <text x="744" y="674" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#8ea1b4">0</text>
+  <text x="736" y="624" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#8ea1b4">10</text>
+  <text x="736" y="574" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#8ea1b4">20</text>
+  <polyline fill="none" stroke="url(#lineRed)" stroke-width="3.5" points="790,668 860,668 930,668 1000,668 1070,666 1140,650 1210,624 1280,596 1350,580"/>
+  <polyline fill="none" stroke="url(#lineOrange)" stroke-width="3.5" points="790,668 860,668 930,668 1000,668 1070,666 1140,648 1210,620 1280,590 1350,572"/>
+  <circle cx="1350" cy="580" r="4.5" fill="#ff6f6f"/>
+  <circle cx="1350" cy="572" r="4.5" fill="#f29d38"/>
+  <rect x="1168" y="512" width="16" height="16" rx="4" fill="#ff6f6f"/>
+  <text x="1194" y="525" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#d3deea">redis errors</text>
+  <rect x="1276" y="512" width="16" height="16" rx="4" fill="#f29d38"/>
+  <text x="1302" y="525" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#d3deea">fallback hits</text>
+
+  <rect x="36" y="570" width="668" height="146" rx="18" fill="url(#panel)" stroke="#2b3542"/>
+  <text x="60" y="606" font-family="Helvetica, Arial, sans-serif" font-size="18" fill="#f2f6fb" font-weight="700">项目说明</text>
+  <text x="60" y="635" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#d3deea">数据来源：FastAPI `/metrics` 暴露的 Prometheus 指标</text>
+  <text x="60" y="661" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#d3deea">关键指标：请求量、允许数、拒绝数、Redis 健康、降级模式、Redis 错误数、fallback 命中次数</text>
+  <text x="60" y="687" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#d3deea">用途：README 展示图、benchmark report 插图、秋招项目面试说明素材</text>
+</svg>
