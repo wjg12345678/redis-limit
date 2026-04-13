@@ -16,10 +16,16 @@ jobs:
       - name: Start Redis
         run: docker compose up -d redis
 
+      - name: Start demo app
+        run: docker compose up -d app
+
       - name: Run functionality checks
         run: |
           docker compose run --rm test remote
           docker compose run --rm -e REDIS_HOST=redis-unavailable test fallback
+
+      - name: Run docker smoke test
+        run: docker compose run --rm smoke
 
       - name: Run pytest suite
         run: docker compose run --rm pytest

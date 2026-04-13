@@ -40,6 +40,8 @@ def verify_remote_token_bucket() -> None:
         raise AssertionError(f"Expected 4th request denied, got {allowed_flags}")
     if results[3].retry_after_ms <= 0:
         raise AssertionError(f"Expected denied request to include retry_after_ms, got {results[3].retry_after_ms}")
+    if any(result.backend_status != redis_limiter.BackendStatus.Healthy for result in results):
+        raise AssertionError("Expected remote token bucket requests to report Healthy backend status")
 
     print("PASS remote token bucket")
     for idx, result in enumerate(results, start=1):
@@ -70,6 +72,8 @@ def verify_resilient_fallback() -> None:
         raise AssertionError("Expected redis_error_count > 0 when Redis is unavailable")
     if limiter.fallback_hit_count() != 3:
         raise AssertionError(f"Expected fallback_hit_count == 3, got {limiter.fallback_hit_count()}")
+    if any(result.backend_status != redis_limiter.BackendStatus.Fallback for result in results):
+        raise AssertionError("Expected fallback requests to report Fallback backend status")
 
     print("PASS resilient fallback")
     print(

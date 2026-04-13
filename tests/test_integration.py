@@ -30,6 +30,7 @@ def test_token_bucket_denies_after_capacity() -> None:
 
     assert [result.allowed for result in results] == [True, True, True, False]
     assert results[3].retry_after_ms > 0
+    assert all(result.backend_status == redis_limiter.BackendStatus.Healthy for result in results)
 
 
 def test_resilient_limiter_falls_back_when_redis_unavailable() -> None:
@@ -52,6 +53,7 @@ def test_resilient_limiter_falls_back_when_redis_unavailable() -> None:
     assert [result.allowed for result in results] == [True, True, False]
     assert limiter.redis_error_count() == 3
     assert limiter.fallback_hit_count() == 3
+    assert all(result.backend_status == redis_limiter.BackendStatus.Fallback for result in results)
 
 
 def test_fastapi_demo_limits_requests() -> None:
@@ -78,6 +80,7 @@ def test_fastapi_demo_limits_requests() -> None:
     assert [response.status_code for response in responses] == [200, 200, 200]
     assert [payload["allowed"] for payload in payloads] == [True, True, False]
     assert payloads[2]["retry_after_ms"] > 0
+    assert all(payload["backend_status"] == "Healthy" for payload in payloads)
 
 
 def test_fastapi_demo_exposes_fallback_state() -> None:
@@ -100,6 +103,8 @@ def test_fastapi_demo_exposes_fallback_state() -> None:
 
     assert first["allowed"] is True
     assert second["allowed"] is False
+    assert first["backend_status"] == "Fallback"
+    assert second["backend_status"] == "Fallback"
     assert second["fallback_hit_count"] >= 2
     assert second["redis_error_count"] >= 2
 

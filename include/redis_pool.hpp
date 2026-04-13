@@ -143,10 +143,10 @@ private:
 class RedisConnectionGuard {
 public:
     RedisConnectionGuard(RedisPool& pool, std::chrono::milliseconds timeout = std::chrono::milliseconds(5000))
-        : pool_(pool), conn_(pool.acquire(timeout)) {}
+        : pool_(pool), conn_(pool.acquire(timeout)), acquired_(conn_.is_valid()) {}
 
     ~RedisConnectionGuard() {
-        if (conn_.is_valid()) {
+        if (acquired_) {
             pool_.release(std::move(conn_));
         }
     }
@@ -158,6 +158,7 @@ public:
 private:
     RedisPool& pool_;
     RedisConnection conn_;
+    bool acquired_;
 };
 
 } // namespace rrl

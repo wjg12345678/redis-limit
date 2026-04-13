@@ -47,9 +47,18 @@ class RateLimitResponse(BaseModel):
     remaining: int
     reset_after_ms: int
     retry_after_ms: int
+    backend_status: Literal["Healthy", "Unavailable", "Fallback"]
     fallback_mode: Literal["FailOpen", "FailClosed", "LocalTokenBucket"]
     redis_error_count: int
     fallback_hit_count: int
+
+
+def backend_status_name(status: redis_limiter.BackendStatus) -> str:
+    if status == redis_limiter.BackendStatus.Unavailable:
+        return "Unavailable"
+    if status == redis_limiter.BackendStatus.Fallback:
+        return "Fallback"
+    return "Healthy"
 
 
 class DemoMetrics:
@@ -178,6 +187,7 @@ def create_app(
             remaining=result.remaining,
             reset_after_ms=result.reset_after_ms,
             retry_after_ms=result.retry_after_ms,
+            backend_status=backend_status_name(result.backend_status),
             fallback_mode=fallback_mode_name(limiter.fallback_mode()),
             redis_error_count=after_redis_errors,
             fallback_hit_count=after_fallback_hits,

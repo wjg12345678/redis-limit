@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cmath>
+#include <cstring>
 #include <exception>
 #include <functional>
 #include <sstream>
@@ -159,23 +160,133 @@ std::string make_member_id(std::int64_t timestamp_ms, int cost) {
 }
 
 RateLimitResult make_unavailable_result() {
-    return {false, 0, 0, 0, 0};
+    return {false, 0, 0, 0, 0, BackendStatus::Unavailable};
 }
 
 bool is_backend_unavailable(const RateLimitResult& result) {
-    return !result.allowed &&
-           result.current_count == 0 &&
-           result.remaining == 0 &&
-           result.reset_after_ms == 0 &&
-           result.retry_after_ms == 0;
+    return result.backend_status == BackendStatus::Unavailable;
 }
 
 RateLimitResult make_fail_open_result() {
-    return {true, 0, 0, 0, 0};
+    return {true, 0, 0, 0, 0, BackendStatus::Fallback};
 }
 
 RateLimitResult make_fail_closed_result() {
-    return {false, 0, 0, 1000, 1000};
+    return {false, 0, 0, 1000, 1000, BackendStatus::Fallback};
+}
+
+bool is_noscript_error(const redisReply* reply) {
+    return reply != nullptr &&
+           reply->type == REDIS_REPLY_ERROR &&
+           reply->str != nullptr &&
+           std::strncmp(reply->str, "NOSCRIPT", 8) == 0;
+}
+
+std::string require_string(const redisReply* reply) {
+    if (!reply || reply->type != REDIS_REPLY_STRING || reply->str == nullptr) {
+        throw std::runtime_error("Expected string in Redis reply");
+    }
+    return reply->str;
+}
+
+RedisReplyPtr load_script(RedisConnection& conn, const std::string& script) {
+    const char* argv[] = {"SCRIPT", "LOAD", script.c_str()};
+    const size_t argvlen[] = {6, 4, script.size()};
+    return conn.execute(3, argv, argvlen);
+}
+
+RedisReplyPtr evalsha_script(RedisConnection& conn,
+                             const std::string& sha,
+                             const std::vector<std::string>& keys,
+                             const std::vector<std::string>& args) {
+    std::vector<std::string> parts;
+    parts.reserve(3 + keys.size() + args.size());
+    parts.emplace_back("EVALSHA");
+    parts.push_back(sha);
+    parts.push_back(std::to_string(keys.size()));
+    parts.insert(parts.end(), keys.begin(), keys.end());
+    parts.insert(parts.end(), args.begin(), args.end());
+
+    std::vector<const char*> argv;
+    std::vector<size_t> argvlen;
+    argv.reserve(parts.size());
+    argvlen.reserve(parts.size());
+    for (const auto& part : parts) {
+        argv.push_back(part.data());
+        argvlen.push_back(part.size());
+    }
+
+    return conn.execute(static_cast<int>(argv.size()), argv.data(), argvlen.data());
+}
+
+RedisReplyPtr eval_cached_script(RedisConnection& conn,
+                                 const std::string& script,
+                                 std::string& sha,
+                                 const std::vector<std::string>& keys,
+                                 const std::vector<std::string>& args) {
+    if (sha.empty()) {
+        auto load_reply = load_script(conn, script);
+        if (!load_reply) {
+            return RedisReplyPtr(nullptr, free_redis_reply);
+        }
+        if (load_reply->type == REDIS_REPLY_ERROR) {
+            throw std::runtime_error(load_reply->str ? load_reply->str : "Redis SCRIPT LOAD error");
+        }
+        sha = require_string(load_reply.get());
+    }
+
+    auto reply = evalsha_script(conn, sha, keys, args);
+    if (!reply) {
+        return reply;
+    }
+    if (is_noscript_error(reply.get())) {
+        auto load_reply = load_script(conn, script);
+        if (!load_reply) {
+            return RedisReplyPtr(nullptr, free_redis_reply);
+        }
+        if (load_reply->type == REDIS_REPLY_ERROR) {
+            throw std::runtime_error(load_reply->str ? load_reply->str : "Redis SCRIPT LOAD error");
+        }
+        sha = require_string(load_reply.get());
+        reply = evalsha_script(conn, sha, keys, args);
+    }
+    return reply;
+}
+
+RateLimitResult execute_sliding_window_script(RedisConnection& conn,
+                                              std::string& script_sha,
+                                              const std::string& redis_key,
+                                              std::int64_t timestamp_ms,
+                                              int window_size_ms,
+                                              int max_requests,
+                                              int effective_cost,
+                                              bool consume) {
+    auto reply = eval_cached_script(conn,
+                                    kSlidingWindowLua,
+                                    script_sha,
+                                    {redis_key},
+                                    {std::to_string(timestamp_ms),
+                                     std::to_string(window_size_ms),
+                                     std::to_string(max_requests),
+                                     std::to_string(effective_cost),
+                                     consume ? "1" : "0",
+                                     make_member_id(timestamp_ms, effective_cost)});
+
+    if (!reply) {
+        return make_unavailable_result();
+    }
+    if (reply->type == REDIS_REPLY_ERROR) {
+        throw std::runtime_error(reply->str ? reply->str : "Redis EVAL error");
+    }
+
+    RateLimitResult result;
+    result.allowed = require_integer(reply.get(), 0) == 1;
+    result.current_count = require_integer(reply.get(), 1);
+    result.remaining = require_integer(reply.get(), 2);
+    result.reset_after_ms = require_integer(reply.get(), 3);
+    result.retry_after_ms = require_integer(reply.get(), 4);
+    result.backend_status = BackendStatus::Healthy;
+    return result;
 }
 
 }  // namespace
@@ -257,30 +368,15 @@ RateLimitResult SlidingWindowLimiter::check_sliding_window(const std::string& ke
     const bool consume = cost > 0;
     const int effective_cost = consume ? cost : 1;
     const std::string redis_key = local_config.key_prefix + key;
-    auto reply = eval_script(*guard,
-                             kSlidingWindowLua,
-                             {redis_key},
-                             {std::to_string(timestamp_ms),
-                              std::to_string(local_config.window_size_ms),
-                              std::to_string(local_config.max_requests),
-                              std::to_string(effective_cost),
-                              consume ? "1" : "0",
-                              make_member_id(timestamp_ms, effective_cost)});
-
-    if (!reply) {
-        return make_unavailable_result();
-    }
-    if (reply->type == REDIS_REPLY_ERROR) {
-        throw std::runtime_error(reply->str ? reply->str : "Redis EVAL error");
-    }
-
-    RateLimitResult result;
-    result.allowed = require_integer(reply.get(), 0) == 1;
-    result.current_count = require_integer(reply.get(), 1);
-    result.remaining = require_integer(reply.get(), 2);
-    result.reset_after_ms = require_integer(reply.get(), 3);
-    result.retry_after_ms = require_integer(reply.get(), 4);
-    return result;
+    std::lock_guard<std::mutex> script_lock(script_mutex_);
+    return execute_sliding_window_script(*guard,
+                                         script_sha_,
+                                         redis_key,
+                                         timestamp_ms,
+                                         local_config.window_size_ms,
+                                         local_config.max_requests,
+                                         effective_cost,
+                                         consume);
 }
 
 TokenBucketLimiter::TokenBucketLimiter(std::shared_ptr<RedisPool> pool,
@@ -354,14 +450,19 @@ RateLimitResult TokenBucketLimiter::execute_bucket_script(const std::string& key
 
     const std::string redis_key = key_prefix_ + key;
     const double refill_per_ms = refill_rate / 1000.0;
-    auto reply = eval_script(*guard,
-                             kTokenBucketLua,
-                             {redis_key},
-                             {std::to_string(now_ms()),
-                              std::to_string(max_tokens),
-                              std::to_string(refill_per_ms),
-                              std::to_string(tokens_needed),
-                              consume ? "1" : "0"});
+    RedisReplyPtr reply(nullptr, free_redis_reply);
+    {
+        std::lock_guard<std::mutex> script_lock(script_mutex_);
+        reply = eval_cached_script(*guard,
+                                   kTokenBucketLua,
+                                   script_sha_,
+                                   {redis_key},
+                                   {std::to_string(now_ms()),
+                                    std::to_string(max_tokens),
+                                    std::to_string(refill_per_ms),
+                                    std::to_string(tokens_needed),
+                                    consume ? "1" : "0"});
+    }
 
     if (!reply) {
         return make_unavailable_result();
@@ -377,6 +478,7 @@ RateLimitResult TokenBucketLimiter::execute_bucket_script(const std::string& key
     result.remaining = remaining;
     result.reset_after_ms = require_integer(reply.get(), 2);
     result.retry_after_ms = require_integer(reply.get(), 3);
+    result.backend_status = BackendStatus::Healthy;
     return result;
 }
 
@@ -449,6 +551,8 @@ RateLimitResult LocalTokenBucketLimiter::allow(const std::string& key, int token
     } else {
         result.retry_after_ms = 0;
     }
+
+    result.backend_status = BackendStatus::Fallback;
 
     return result;
 }

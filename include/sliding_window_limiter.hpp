@@ -11,6 +11,12 @@
 
 namespace rrl {
 
+enum class BackendStatus {
+    Healthy,
+    Unavailable,
+    Fallback,
+};
+
 // 限流结果
 struct RateLimitResult {
     bool allowed;           // 是否允许通过
@@ -18,6 +24,7 @@ struct RateLimitResult {
     int remaining;          // 剩余配额
     int reset_after_ms;     // 窗口重置时间(ms)
     int retry_after_ms;     // 建议重试时间(ms), 被拒绝时有效
+    BackendStatus backend_status = BackendStatus::Healthy;  // 后端状态
 };
 
 // 限流配置
@@ -57,6 +64,8 @@ private:
     std::shared_ptr<RedisPool> pool_;
     RateLimitConfig config_;
     mutable std::mutex config_mutex_;
+    mutable std::mutex script_mutex_;
+    std::string script_sha_;
 
     // 使用Redis Lua脚本实现原子性滑动窗口
     RateLimitResult check_sliding_window(const std::string& key, int cost);
@@ -84,6 +93,8 @@ private:
     double refill_rate_;
     std::string key_prefix_;
     mutable std::mutex config_mutex_;
+    mutable std::mutex script_mutex_;
+    std::string script_sha_;
 };
 
 enum class FallbackMode {

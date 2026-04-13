@@ -69,12 +69,12 @@ cmake --build build
 ## 2. 项目亮点
 
 - 基于 Redis 作为中心状态存储，实现多实例共享限流配额
-- 基于 Lua 脚本封装 Redis 原子操作，保证并发场景下状态更新一致性
+- 基于 Lua 脚本封装 Redis 原子操作，并通过 `SCRIPT LOAD + EVALSHA` 缓存脚本，保证并发场景下状态更新一致性
 - 使用 C++ 封装 Redis 连接池，降低频繁建连带来的开销
 - 同时实现滑动窗口和令牌桶两种限流算法，便于对比不同场景下的策略选择
 - 通过 `pybind11` 提供 Python 调用接口，方便接入 Python 服务
-- 提供 Redis 故障降级方案，在 Redis 不可用时支持本地限流、放行或拒绝
-- 提供 FastAPI demo、Prometheus 风格指标、`pytest`、CI 和压测断言，形成完整工程闭环
+- 提供 Redis 故障降级方案，在 Redis 不可用时支持本地限流、放行或拒绝，并显式返回 `backend_status`
+- 提供 FastAPI demo、Prometheus 风格指标、Docker 冒烟测试、`pytest`、CI 和压测断言，形成完整工程闭环
 
 ---
 
@@ -173,6 +173,8 @@ cmake --build build
   验证 Redis 正常限流和 Redis 故障降级
 - [tests/test_integration.py](/Users/mac/Desktop/redis-rate-limiter/tests/test_integration.py)
   使用 `pytest` 覆盖 Redis 令牌桶、故障降级和 FastAPI 集成
+- [tests/smoke_docker.py](/Users/mac/Desktop/redis-rate-limiter/tests/smoke_docker.py)
+  通过 Docker 网络直接校验 `/healthz`、`/rate-limit/check`、`/metrics` 三条链路
 - [tests/benchmark.py](/Users/mac/Desktop/redis-rate-limiter/tests/benchmark.py)
   提供吞吐压测和限流有效性压测
 
@@ -247,7 +249,7 @@ cmake --build build
 - 每次请求到来时先清理过期数据
 - 再统计当前窗口内请求数
 - 如果没有超限，则插入本次请求时间戳
-- 整个过程通过 Lua 脚本保证原子性
+- 整个过程通过 Lua 脚本保证原子性，并使用 `SCRIPT LOAD + EVALSHA` 避免每次请求重复传输完整脚本
 
 特点：
 
@@ -284,7 +286,7 @@ cmake --build build
   - 先根据时间差补充令牌
   - 再判断是否足够扣减
   - 最后返回剩余令牌和建议重试时间
-- 整个过程通过 Lua 脚本一次完成，保证原子性
+- 整个过程通过 Lua 脚本一次完成，保证原子性，并优先走 `EVALSHA`
 
 特点：
 
@@ -571,6 +573,12 @@ docker compose build
 docker compose up -d redis
 ```
 
+如果要验证完整 HTTP 链路，可以额外启动 demo app：
+
+```bash
+docker compose up -d app
+```
+
 验证 Redis 正常时的令牌桶限流：
 
 ```bash
@@ -608,6 +616,18 @@ docker compose run --rm pytest
 - Redis 不可用时自动进入本地降级
 - FastAPI `/healthz` 和 `/rate-limit/check` 接口
 - FastAPI 接口在 Redis 故障时暴露降级状态
+
+运行 Docker 冒烟测试：
+
+```bash
+docker compose run --rm smoke
+```
+
+覆盖范围：
+
+- app 容器健康检查
+- `/healthz`、`/rate-limit/check`、`/metrics` 端到端链路
+- `backend_status` 与 Prometheus 指标输出
 
 ---
 
@@ -724,6 +744,17 @@ PASS resilient fallback
 - HTTP demo、基础限流、故障降级、指标导出四条主路径都已经纳入回归测试
 - 当前镜像下，`pytest` 集成测试全部通过
 
+Docker 冒烟测试结果：
+
+```text
+PASS docker smoke
+```
+
+结论：
+
+- demo app 在容器网络内可正常提供 `/healthz`、`/rate-limit/check`、`/metrics`
+- 冒烟测试已覆盖 `backend_status` 与指标暴露的最短验证路径
+
 ### 12.6.2 吞吐压测结果
 
 汇总表：
@@ -799,6 +830,7 @@ latency_us avg=427.13 p50=352.07 p95=846.10 p99=1634.98
 - `over_issued=0.00`
 - 严格断言模式返回 `PASS effectiveness assertion`
 - 在高并发热点 key 压力下没有出现超发，说明 Lua + Redis 的原子扣减逻辑是有效的
+- 当前实现优先使用 `SCRIPT LOAD + EVALSHA` 执行脚本，减少重复传输脚本内容的开销
 
 这说明在上述参数下，Redis 令牌桶没有出现超发，限流有效性符合预期。
 
@@ -835,7 +867,7 @@ curl -sS http://127.0.0.1:8000/rate-limit/check \
 - `GET /metrics`
   返回 Prometheus 风格指标，包括请求总数、允许数、拒绝数、Redis 错误数、降级次数和耗时累计
 - `POST /rate-limit/check`
-  返回 `allowed`、`remaining`、`retry_after_ms`、`redis_error_count`、`fallback_hit_count`
+  返回 `allowed`、`remaining`、`retry_after_ms`、`backend_status`、`redis_error_count`、`fallback_hit_count`
 
 查看指标：
 
@@ -858,6 +890,12 @@ demo_redis_health 1
 {"ok":true,"redis_healthy":true,"fallback_mode":"LocalTokenBucket"}
 ```
 
+`backend_status` 语义：
+
+- `Healthy`：请求由 Redis 远端限流路径处理
+- `Unavailable`：Redis 不可用且当前结果未进入降级路径
+- `Fallback`：请求已经走本地令牌桶或 fail-open / fail-closed 降级路径
+
 这个 demo 适合在秋招里讲“我是怎么把底层限流组件接到 Python Web 服务里的”。
 
 ---
@@ -867,8 +905,10 @@ demo_redis_health 1
 CI 配置文件在 [.github/workflows/ci.yml](/Users/mac/Desktop/redis-rate-limiter/.github/workflows/ci.yml)，当前流水线会自动执行：
 
 - `docker compose build`
+- `docker compose up -d app`
 - `docker compose run --rm test remote`
 - `docker compose run --rm -e REDIS_HOST=redis-unavailable test fallback`
+- `docker compose run --rm smoke`
 - `docker compose run --rm pytest`
 - `docker compose run --rm bench --mode effectiveness ... --max-over-issue 0`
 
@@ -927,15 +967,15 @@ FastAPI -> ResilientTokenBucketLimiter -> LocalTokenBucket fallback
 简历版项目描述可以直接写：
 
 - 基于 `C++17 + hiredis + Redis Lua + pybind11` 实现分布式限流组件，支持滑动窗口、令牌桶和 Redis 故障降级，并提供 Python 服务接入能力。
-- 设计 `ResilientTokenBucketLimiter`，在 Redis 不可用时自动切换本地令牌桶，平衡全局一致性与服务可用性。
-- 封装 FastAPI demo、`pytest` 集成测试、GitHub Actions 和 Docker Compose 验证链路，补齐从组件实现到业务接入、回归测试、性能验证的工程闭环。
+- 设计 `ResilientTokenBucketLimiter`，在 Redis 不可用时自动切换本地令牌桶，平衡全局一致性与服务可用性，并显式暴露 `backend_status`。
+- 封装 FastAPI demo、Docker 冒烟测试、`pytest` 集成测试、GitHub Actions 和 Docker Compose 验证链路，补齐从组件实现到业务接入、回归测试、性能验证的工程闭环。
 - 在 4 worker、热点 key 的严格有效性压测下，理论放行 `45` 次、实际放行 `45` 次，`over_issued=0`，验证分布式限流逻辑未发生超发。
 
 如果你想写成更短的秋招 bullet，可以压缩成：
 
 - 实现基于 Redis Lua 的分布式限流组件，支持滑动窗口、令牌桶、Python 接入与 Redis 故障降级。
 - 使用 C++ 封装 Redis 连接池并通过 pybind11 暴露给 FastAPI 服务，在热点 key 压测下验证限流无超发。
-- 补齐 Docker、pytest、CI、压测断言和指标导出，形成完整的工程化中间件项目。
+- 补齐 Docker 冒烟、pytest、CI、压测断言和指标导出，形成完整的工程化中间件项目。
 
 如果你要写在项目标题或面试开场里，可以直接用这句：
 

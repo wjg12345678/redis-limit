@@ -46,7 +46,14 @@ PYBIND11_MODULE(redis_limiter, m) {
         .def_readonly("current_count", &RateLimitResult::current_count)
         .def_readonly("remaining", &RateLimitResult::remaining)
         .def_readonly("reset_after_ms", &RateLimitResult::reset_after_ms)
-        .def_readonly("retry_after_ms", &RateLimitResult::retry_after_ms);
+        .def_readonly("retry_after_ms", &RateLimitResult::retry_after_ms)
+        .def_readonly("backend_status", &RateLimitResult::backend_status);
+
+    py::enum_<BackendStatus>(m, "BackendStatus")
+        .value("Healthy", BackendStatus::Healthy)
+        .value("Unavailable", BackendStatus::Unavailable)
+        .value("Fallback", BackendStatus::Fallback)
+        .export_values();
 
     py::enum_<FallbackMode>(m, "FallbackMode")
         .value("FailOpen", FallbackMode::FailOpen)

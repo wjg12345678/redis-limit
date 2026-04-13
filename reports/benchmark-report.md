@@ -9,7 +9,7 @@ Redis 分布式限流组件
 - 在当前 Docker 测试环境下，Redis 令牌桶限流的吞吐约为 `12.6k` 到 `13.0k QPS`
 - 在热点 key 严格有效性压测下，理论最大放行 `45` 次，实际放行 `45` 次
 - `over_issued=0.00`，本次压测没有观察到超发
-- 功能验证、FastAPI 接入、指标导出、`pytest` 回归测试均通过
+- 功能验证、Docker 冒烟测试、FastAPI 接入、指标导出、`pytest` 回归测试均通过
 
 ## 压测范围
 
@@ -32,8 +32,8 @@ Redis 分布式限流组件
 | 运行方式 | Docker Compose |
 | Redis | `redis:7-alpine` |
 | 应用栈 | `C++17 + hiredis + pybind11 + FastAPI` |
-| 限流路径 | Redis Lua Token Bucket |
-| 验证链路 | `test`、`pytest`、`bench`、`/metrics` |
+| 限流路径 | Redis Lua Token Bucket (`SCRIPT LOAD + EVALSHA`) |
+| 验证链路 | `test`、`smoke`、`pytest`、`bench`、`/metrics` |
 
 ## 吞吐结果
 
@@ -67,6 +67,7 @@ Redis 分布式限流组件
 - 理论最大放行次数与实际放行次数完全一致
 - `over_issued=0.00`，本次压测未出现超发
 - 热点 key 场景能够覆盖 Redis Lua 原子扣减路径的并发竞争
+- 当前实现优先通过 `SCRIPT LOAD + EVALSHA` 执行 Lua 脚本
 
 ## 验证快照
 
@@ -74,6 +75,7 @@ Redis 分布式限流组件
 | --- | --- |
 | 令牌桶功能验证 | PASS |
 | Redis 故障降级验证 | PASS |
+| Docker smoke | PASS |
 | FastAPI `/healthz` | PASS |
 | FastAPI `/metrics` | PASS |
 | Prometheus 指标抓取 | PASS |
@@ -94,10 +96,11 @@ Grafana 展示图：
 
 ```bash
 docker compose build
-docker compose up -d redis
+docker compose up -d redis app
 
 docker compose run --rm test remote
 docker compose run --rm -e REDIS_HOST=redis-unavailable test fallback
+docker compose run --rm smoke
 docker compose run --rm pytest
 
 docker compose run --rm bench --workers 4 --duration 5
@@ -119,10 +122,10 @@ docker compose run --rm bench \
 这个项目已经不仅仅是“实现了一个限流算法”，而是具备了：
 
 - Redis 分布式配额共享
-- Lua 原子更新
+- Lua 原子更新与脚本缓存执行
 - Python/FastAPI 业务接入
 - Redis 故障降级
-- 自动化测试与 CI
+- Docker 冒烟、自动化测试与 CI
 - 压测与有效性断言
 
 从秋招项目角度看，这份报告可以直接用来支撑“性能结果”和“限流有效性”两类面试问题。

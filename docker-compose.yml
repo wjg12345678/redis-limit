@@ -24,6 +24,11 @@ services:
       RATE_LIMIT_FALLBACK_MODE: LocalTokenBucket
       LOCAL_MAX_TOKENS: 10
       LOCAL_REFILL_RATE: 2
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   test:
     image: redis-rate-limiter-app
@@ -66,6 +71,18 @@ services:
       redis:
         condition: service_healthy
     entrypoint: ["python3", "tests/benchmark.py"]
+
+  smoke:
+    image: redis-rate-limiter-app
+    working_dir: /work
+    volumes:
+      - .:/work
+    environment:
+      PYTHONPATH: /app:/work
+    depends_on:
+      app:
+        condition: service_healthy
+    entrypoint: ["python3", "tests/smoke_docker.py"]
 
   prometheus:
     image: prom/prometheus:v2.54.1
