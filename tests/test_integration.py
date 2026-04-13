@@ -1,3 +1,5 @@
+import concurrent.futures
+import threading
 import time
 
 from fastapi.testclient import TestClient
@@ -30,6 +32,35 @@ def test_token_bucket_denies_after_capacity() -> None:
 
     assert [result.allowed for result in results] == [True, True, True, False]
     assert results[3].retry_after_ms > 0
+    assert all(result.backend_status == redis_limiter.BackendStatus.Healthy for result in results)
+
+
+def test_sliding_window_shared_key_does_not_over_issue_under_concurrency() -> None:
+    pool = redis_limiter.RedisPool(build_redis_config())
+    config = redis_limiter.RateLimitConfig()
+    config.max_requests = 20
+    config.window_size_ms = 1000
+    config.key_prefix = f"pytest:sliding:{int(time.time() * 1000)}:"
+    limiter = redis_limiter.SlidingWindowLimiter(pool, config)
+
+    worker_count = 8
+    requests_per_worker = 10
+    start_barrier = threading.Barrier(worker_count)
+
+    def run_worker() -> list[redis_limiter.RateLimitResult]:
+        start_barrier.wait()
+        return [limiter.allow("hot:key") for _ in range(requests_per_worker)]
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = [executor.submit(run_worker) for _ in range(worker_count)]
+
+    results = [result for future in futures for result in future.result()]
+    allowed_count = sum(1 for result in results if result.allowed)
+    denied_count = sum(1 for result in results if not result.allowed)
+
+    assert len(results) == worker_count * requests_per_worker
+    assert allowed_count == config.max_requests
+    assert denied_count == len(results) - config.max_requests
     assert all(result.backend_status == redis_limiter.BackendStatus.Healthy for result in results)
 
 

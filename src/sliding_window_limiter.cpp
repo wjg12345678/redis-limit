@@ -23,6 +23,7 @@ local min_score = now_ms - window_ms
 
 redis.call('ZREMRANGEBYSCORE', key, 0, min_score)
 local current = redis.call('ZCARD', key)
+local allowed = 0
 
 if consume == 1 and current + cost <= limit then
     for i = 1, cost do
@@ -30,6 +31,9 @@ if consume == 1 and current + cost <= limit then
     end
     redis.call('PEXPIRE', key, window_ms)
     current = current + cost
+    allowed = 1
+elseif consume == 0 and current + cost <= limit then
+    allowed = 1
 end
 
 local remaining = limit - current
@@ -46,8 +50,6 @@ end
 if current + cost > limit then
     retry_after = reset_after
 end
-
-local allowed = ((consume == 1 and current <= limit) or (consume == 0 and current + cost <= limit)) and 1 or 0
 
 return {allowed, current, remaining, reset_after, retry_after}
 )lua";
@@ -154,8 +156,15 @@ int require_integer(const redisReply* reply, size_t index) {
 }
 
 std::string make_member_id(std::int64_t timestamp_ms, int cost) {
+    static std::atomic<std::uint64_t> sequence{0};
     std::ostringstream builder;
-    builder << timestamp_ms << "-" << cost << "-" << std::hash<std::thread::id>{}(std::this_thread::get_id());
+    builder << timestamp_ms
+            << "-"
+            << cost
+            << "-"
+            << std::hash<std::thread::id>{}(std::this_thread::get_id())
+            << "-"
+            << sequence.fetch_add(1, std::memory_order_relaxed);
     return builder.str();
 }
 
