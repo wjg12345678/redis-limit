@@ -2,14 +2,14 @@
 
 一个基于 `C++17 + hiredis + pybind11` 实现的轻量级分布式限流组件。
 
-项目核心目标是把原本只能在单机内存中工作的限流逻辑，升级为**多实例共享配额**的分布式方案，并且能够直接接入 Python 服务。
+项目核心目标是把原本只能在单机内存中工作的限流逻辑，升级为**多实例共享配额**的分布式方案，并能够直接接入 Python 服务。
 
-适合作为：
+可用于：
 
-- 后端中间件练手项目
-- Python 服务的分布式限流组件
-- 校招 / 实习 / 秋招简历项目
-- 学习 Redis 原子操作、Lua 脚本、C++ 封装和 Python 绑定的综合项目
+- Python 服务的分布式限流
+- 多实例部署下的共享额度控制
+- 依赖 Redis 原子操作的限流治理场景
+- 需要故障降级、可观测性和验证链路的服务接入场景
 
 ## 快速导航
 
@@ -24,10 +24,9 @@
 - [功能验证](#124-功能验证)
 - [压测](#125-压测)
 - [测试与压测结果](#126-测试与压测结果)
-- [FastAPI Demo](#127-fastapi-demo)
+- [FastAPI 接入](#127-fastapi-接入)
 - [CI](#128-ci)
 - [架构图](#129-架构图)
-- [简历描述](#1210-简历描述)
 - [Benchmark Report](#1211-benchmark-report)
 - [Prometheus 与 Grafana](#1212-prometheus-与-grafana)
 
@@ -48,7 +47,7 @@ cmake --build build
 
 ## 1. 项目简介
 
-在后端服务中，限流是很常见的基础能力，比如：
+在后端服务中，限流是常见的基础能力，例如：
 
 - 登录接口防刷
 - 短信验证码发送频率限制
@@ -62,7 +61,7 @@ cmake --build build
 
 这个项目就是为了解决这个问题。
 
-它将限流状态放到 Redis 中，由多个实例共享同一份额度，同时通过 `pybind11` 暴露给 Python 使用，适合作为 Python 后端服务的限流组件。
+它将限流状态放到 Redis 中，由多个实例共享同一份额度，同时通过 `pybind11` 暴露给 Python 使用，可作为 Python 后端服务的限流组件。
 
 ---
 
@@ -71,22 +70,21 @@ cmake --build build
 - 基于 Redis 作为中心状态存储，实现多实例共享限流配额
 - 基于 Lua 脚本封装 Redis 原子操作，并通过 `SCRIPT LOAD + EVALSHA` 缓存脚本，保证并发场景下状态更新一致性
 - 使用 C++ 封装 Redis 连接池，降低频繁建连带来的开销
-- 同时实现滑动窗口和令牌桶两种限流算法，便于对比不同场景下的策略选择
+- 同时实现滑动窗口和令牌桶两种限流算法，便于覆盖不同场景下的策略选择
 - 通过 `pybind11` 提供 Python 调用接口，方便接入 Python 服务
 - 提供 Redis 故障降级方案，在 Redis 不可用时支持本地限流、放行或拒绝，并显式返回 `backend_status`
-- 提供 FastAPI demo、Prometheus 风格指标、Docker 冒烟测试、`pytest`、CI 和压测断言，形成完整工程闭环
+- 提供 FastAPI 接入样例、Prometheus 风格指标、Docker 冒烟测试、`pytest`、CI 和压测断言，形成完整工程闭环
 
 ---
 
 ## 3. 适用场景
 
-适合下面这类场景：
+面向下面这类场景：
 
 - Python Web 服务的接口限流
 - 多实例部署下需要共享额度的接口控制
-- 后端中间件项目练手
-- 校招 / 实习 / 秋招简历项目
-- 想把 Redis、C++、Python 绑定、分布式限流几个点串成一个完整项目
+- 登录、验证码、支付、风控等速率限制
+- 需要将 Redis、C++、Python 绑定、分布式限流组合进同一服务组件的场景
 
 ---
 
@@ -123,13 +121,7 @@ cmake --build build
 
 ### `include/`
 
-放头文件，也就是“接口声明”。
-
-你可以把它理解成：
-
-- 告诉别人这个项目里有哪些类
-- 每个类有哪些方法
-- 每个结构体里有哪些字段
+放头文件，也就是接口声明。
 
 主要文件：
 
@@ -140,12 +132,7 @@ cmake --build build
 
 ### `src/`
 
-放源文件，也就是“具体实现”。
-
-你可以把它理解成：
-
-- 头文件里只是说“有这些功能”
-- `src/` 里才是真正写这些功能怎么工作的地方
+放源文件，也就是具体实现。
 
 主要文件：
 
@@ -158,12 +145,12 @@ cmake --build build
 
 ### `examples/`
 
-放 Python 调用示例。
+放 Python 调用样例。
 
 - [examples/python_demo.py](/Users/mac/Desktop/redis-rate-limiter/examples/python_demo.py)
-  演示如何从 Python 中创建 Redis 连接池并调用限流器
+  说明如何从 Python 中创建 Redis 连接池并调用限流器
 - [examples/fastapi_demo.py](/Users/mac/Desktop/redis-rate-limiter/examples/fastapi_demo.py)
-  演示如何把限流器接入 FastAPI 接口
+  说明如何把限流器接入 FastAPI 接口
 
 ### `tests/`
 
@@ -180,7 +167,7 @@ cmake --build build
 
 ### `docker-compose.yml`
 
-定义本地 Redis、示例运行环境、测试服务和压测服务。
+定义本地 Redis、接入样例运行环境、测试服务和压测服务。
 
 ### `.github/workflows/ci.yml`
 
@@ -224,7 +211,7 @@ cmake --build build
 - 支持连接池大小调整
 - 支持统计信息导出
 
-这个模块体现的是**工程能力**，而不仅仅是算法能力。
+这个模块体现的是工程能力，而不仅仅是算法能力。
 
 ---
 
@@ -235,7 +222,7 @@ cmake --build build
 - [include/sliding_window_limiter.hpp](/Users/mac/Desktop/redis-rate-limiter/include/sliding_window_limiter.hpp)
 - [src/sliding_window_limiter.cpp](/Users/mac/Desktop/redis-rate-limiter/src/sliding_window_limiter.cpp)
 
-适合场景：
+适用场景：
 
 - 需要严格控制“某一时间窗口内最多多少次请求”
 
@@ -254,7 +241,7 @@ cmake --build build
 特点：
 
 - 语义更严格
-- 更适合“窗口内请求数上限”类场景
+- 更贴近“窗口内请求数上限”类场景
 - 一旦降级到本地实现，多实例之间的全局精度损失会更明显
 
 ---
@@ -266,7 +253,7 @@ cmake --build build
 - [include/sliding_window_limiter.hpp](/Users/mac/Desktop/redis-rate-limiter/include/sliding_window_limiter.hpp)
 - [src/sliding_window_limiter.cpp](/Users/mac/Desktop/redis-rate-limiter/src/sliding_window_limiter.cpp)
 
-适合场景：
+适用场景：
 
 - 需要限制平均速率
 - 允许一定程度的短时突发流量
@@ -290,8 +277,8 @@ cmake --build build
 
 特点：
 
-- 更适合平滑限流
-- 更像真实后端项目中的常见方案
+- 更贴近平滑限流
+- 更接近真实后端服务中的常见方案
 - 与故障降级组合时更自然
 
 ---
@@ -330,7 +317,7 @@ cmake --build build
 
 ### `FallbackMode::LocalTokenBucket`
 
-推荐默认值。
+建议作为默认值。
 
 行为：
 
@@ -350,7 +337,7 @@ cmake --build build
 - Redis 正常：正常限流
 - Redis 失败：直接放行
 
-适合：
+适用情况：
 
 - 对可用性要求很高
 - Redis 挂了也不希望阻塞业务
@@ -366,7 +353,7 @@ cmake --build build
 - Redis 正常：正常限流
 - Redis 失败：直接拒绝
 
-适合：
+适用情况：
 
 - 风险控制更重要
 - 宁可错杀，也不能过量放行
@@ -379,19 +366,19 @@ cmake --build build
 
 ## 7. 为什么默认推荐“令牌桶 + 本地降级”
 
-这个项目里，最推荐作为主线讲解和接入的方案是：
+这个项目里，最推荐作为主线接入的方案是：
 
 **`ResilientTokenBucketLimiter + LocalTokenBucket`**
 
 原因：
 
-- 令牌桶本身更适合速率控制和流量平滑
+- 令牌桶本身更贴近速率控制和流量平滑
 - Redis 挂掉时，本地令牌桶是比较自然的退化方式
 - 虽然失去了全局一致性，但仍能保护单机
-- 比纯 `fail open` 更安全
-- 比纯 `fail closed` 更可用
+- 比纯 `FailOpen` 更安全
+- 比纯 `FailClosed` 更可用
 
-这也是更像真实工程项目的设计取舍。
+这也是更接近真实工程里的设计取舍。
 
 ---
 
@@ -550,7 +537,7 @@ print(limiter.redis_error_count(), limiter.fallback_hit_count())
 
 这次补充的工程化能力包括：
 
-- 增加 [examples/fastapi_demo.py](/Users/mac/Desktop/redis-rate-limiter/examples/fastapi_demo.py)，提供真实 HTTP 接入示例
+- 增加 [examples/fastapi_demo.py](/Users/mac/Desktop/redis-rate-limiter/examples/fastapi_demo.py)，提供真实 HTTP 接入样例
 - 增加 Docker Compose `test` 服务，可直接在容器内执行功能验证
 - 增加 Docker Compose `pytest` 服务，可直接执行集成测试
 - 增加 [tests/verify_functionality.py](/Users/mac/Desktop/redis-rate-limiter/tests/verify_functionality.py)，覆盖正常限流和 Redis 故障降级
@@ -573,7 +560,7 @@ docker compose build
 docker compose up -d redis
 ```
 
-如果要验证完整 HTTP 链路，可以额外启动 demo app：
+如果要验证完整 HTTP 链路，可以额外启动 app：
 
 ```bash
 docker compose up -d app
@@ -741,7 +728,7 @@ PASS resilient fallback
 
 结论：
 
-- HTTP demo、基础限流、故障降级、指标导出四条主路径都已经纳入回归测试
+- HTTP 接入样例、基础限流、故障降级、指标导出四条主路径都已经纳入回归测试
 - 当前镜像下，`pytest` 集成测试全部通过
 
 Docker 冒烟测试结果：
@@ -752,7 +739,7 @@ PASS docker smoke
 
 结论：
 
-- demo app 在容器网络内可正常提供 `/healthz`、`/rate-limit/check`、`/metrics`
+- app 在容器网络内可正常提供 `/healthz`、`/rate-limit/check`、`/metrics`
 - 冒烟测试已覆盖 `backend_status` 与指标暴露的最短验证路径
 
 ### 12.6.2 吞吐压测结果
@@ -836,9 +823,9 @@ latency_us avg=427.13 p50=352.07 p95=846.10 p99=1634.98
 
 ---
 
-## 12.7 FastAPI Demo
+## 12.7 FastAPI 接入
 
-这个 demo 的目的是把组件从“库”变成“可接入业务的服务”。
+这部分的作用是把组件从“库”扩展成“可接入业务服务的限流能力”。
 
 启动方式：
 
@@ -896,8 +883,6 @@ demo_redis_health 1
 - `Unavailable`：Redis 不可用且当前结果未进入降级路径
 - `Fallback`：请求已经走本地令牌桶或 fail-open / fail-closed 降级路径
 
-这个 demo 适合在秋招里讲“我是怎么把底层限流组件接到 Python Web 服务里的”。
-
 ---
 
 ## 12.8 CI
@@ -920,7 +905,7 @@ CI 配置文件在 [.github/workflows/ci.yml](/Users/mac/Desktop/redis-rate-limi
 
 ```text
                 +------------------------+
-                |  FastAPI Demo Service  |
+                |  FastAPI Service       |
                 | /healthz /metrics      |
                 | /rate-limit/check      |
                 +-----------+------------+
@@ -954,7 +939,7 @@ Redis 不可用时：
 FastAPI -> ResilientTokenBucketLimiter -> LocalTokenBucket fallback
 ```
 
-这张图适合面试时讲三件事：
+这张图主要说明三件事：
 
 - Python 服务怎么接入 C++ 扩展
 - Lua + Redis 为什么能保证原子扣减
@@ -962,24 +947,18 @@ FastAPI -> ResilientTokenBucketLimiter -> LocalTokenBucket fallback
 
 ---
 
-## 12.10 简历描述
+## 12.10 组件描述
 
-简历版项目描述可以直接写：
+可以直接概括为：
 
 - 基于 `C++17 + hiredis + Redis Lua + pybind11` 实现分布式限流组件，支持滑动窗口、令牌桶和 Redis 故障降级，并提供 Python 服务接入能力。
 - 设计 `ResilientTokenBucketLimiter`，在 Redis 不可用时自动切换本地令牌桶，平衡全局一致性与服务可用性，并显式暴露 `backend_status`。
-- 封装 FastAPI demo、Docker 冒烟测试、`pytest` 集成测试、GitHub Actions 和 Docker Compose 验证链路，补齐从组件实现到业务接入、回归测试、性能验证的工程闭环。
+- 封装 FastAPI 接入样例、Docker 冒烟测试、`pytest` 集成测试、GitHub Actions 和 Docker Compose 验证链路，补齐从组件实现到业务接入、回归测试、性能验证的工程闭环。
 - 在 4 worker、热点 key 的严格有效性压测下，理论放行 `45` 次、实际放行 `45` 次，`over_issued=0`，验证分布式限流逻辑未发生超发。
 
-如果你想写成更短的秋招 bullet，可以压缩成：
+如果要压缩成一句话，可以写成：
 
-- 实现基于 Redis Lua 的分布式限流组件，支持滑动窗口、令牌桶、Python 接入与 Redis 故障降级。
-- 使用 C++ 封装 Redis 连接池并通过 pybind11 暴露给 FastAPI 服务，在热点 key 压测下验证限流无超发。
-- 补齐 Docker 冒烟、pytest、CI、压测断言和指标导出，形成完整的工程化中间件项目。
-
-如果你要写在项目标题或面试开场里，可以直接用这句：
-
-> 这是一个面向 Python 后端服务的 Redis 分布式限流中间件，核心特点是分布式共享配额、Redis 故障降级、可观测性和完整的测试压测闭环。
+> 这是一个面向 Python 后端服务的 Redis 分布式限流组件，核心特点是分布式共享配额、Redis 故障降级、可观测性和完整的测试压测闭环。
 
 建议项目标签：
 
@@ -1002,11 +981,11 @@ FastAPI -> ResilientTokenBucketLimiter -> LocalTokenBucket fallback
 - [reports/benchmark-report.md](/Users/mac/Desktop/redis-rate-limiter/reports/benchmark-report.md)
 - [reports/benchmark-report.html](/Users/mac/Desktop/redis-rate-limiter/reports/benchmark-report.html)
 
-适合用途：
+可用于：
 
-- 单独发给面试官看性能结果
-- 做 GitHub 项目展示入口
-- 截图放进简历或项目汇报材料
+- 查看性能结果
+- 作为仓库文档入口
+- 导出为汇报材料
 - 直接浏览或打印导出 PDF
 
 ---
@@ -1040,7 +1019,7 @@ Grafana 默认登录：
 
 - `Redis Rate Limiter Overview`
 
-展示图：
+看板图：
 
 ![Grafana Dashboard Mock](./assets/charts/grafana-dashboard-mock.svg)
 
@@ -1057,7 +1036,7 @@ Dashboard 主要观察：
 - Prometheus 已成功抓取到应用指标
 - 已观察到 `demo_rate_limit_allowed_total` 指标曲线随请求增长
 - 说明 `FastAPI /metrics -> Prometheus` 这条监控链路已经打通
-- Grafana 配置已完成，后续在镜像拉取稳定后可直接补 dashboard 截图
+- Grafana 配置已完成，可直接用于本地查看 dashboard
 
 相关文件：
 
@@ -1066,29 +1045,13 @@ Dashboard 主要观察：
 - [grafana/provisioning/dashboards/dashboard.yml](/Users/mac/Desktop/redis-rate-limiter/grafana/provisioning/dashboards/dashboard.yml)
 - [grafana/dashboards/redis-rate-limiter-dashboard.json](/Users/mac/Desktop/redis-rate-limiter/grafana/dashboards/redis-rate-limiter-dashboard.json)
 
-这部分的价值在于，它把“有 metrics”提升成“能看 dashboard、能做现场演示、能讲可观测性闭环”。
+这部分的价值在于，它把“有 metrics”提升成“可以直接观察 dashboard 和完整可观测性链路”。
 
 ---
 
-## 13. 这个项目更适合怎么讲
+## 13. 当前项目推荐主线
 
-如果是放到 GitHub 或写进简历，最推荐的描述方式不是：
-
-- “我实现了两个限流算法”
-
-而是：
-
-- “我实现了一个基于 Redis 的分布式限流组件，并支持 Python 服务接入和 Redis 故障降级”
-
-更准确一点，可以写成：
-
-> 基于 C++/hiredis 封装 Redis 连接池，使用 Redis Lua 实现滑动窗口和令牌桶分布式限流，通过 pybind11 暴露 Python 调用接口，并为 Redis 故障场景设计本地令牌桶降级方案。
-
----
-
-## 14. 当前项目推荐主线
-
-如果你后续要继续完善这个项目，建议主线聚焦在：
+如果后续继续完善这个项目，建议主线聚焦在：
 
 - `TokenBucketLimiter`
 - `ResilientTokenBucketLimiter`
@@ -1096,11 +1059,11 @@ Dashboard 主要观察：
 - benchmark / 压测数据
 - README 和架构说明
 
-滑动窗口建议保留，作为补充方案和算法对比能力展示。
+滑动窗口建议保留，作为补充方案和算法对比能力。
 
 ---
 
-## 15. 一句话总结
+## 14. 一句话总结
 
 这是一个面向 Python 后端服务的 Redis 分布式限流组件项目，重点不只是“限流算法”，而是：
 
@@ -1112,11 +1075,11 @@ Dashboard 主要观察：
 
 ---
 
-## 16. 开源说明
+## 15. 开源说明
 
 - License: [MIT](./LICENSE)
 - 欢迎基于这个项目继续扩展，例如：
-  - 增加 FastAPI / Flask 接入 demo
+  - 增加 FastAPI / Flask 接入样例
   - 增加 benchmark 压测脚本
   - 增加监控指标导出
   - 增加配置热更新
