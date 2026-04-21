@@ -148,9 +148,9 @@ cmake --build build
 放 Python 调用样例。
 
 - [examples/python_demo.py](/Users/mac/Desktop/redis-rate-limiter/examples/python_demo.py)
-  说明如何从 Python 中创建 Redis 连接池并调用限流器
+  说明如何在普通 Python 业务代码中先调用限流器，再执行下游持久化逻辑
 - [examples/fastapi_demo.py](/Users/mac/Desktop/redis-rate-limiter/examples/fastapi_demo.py)
-  说明如何把限流器接入 FastAPI 接口
+  说明如何把限流器接入 FastAPI 业务接口，并在放行后访问业务下游
 
 ### `tests/`
 
@@ -533,11 +533,31 @@ print(limiter.redis_error_count(), limiter.fallback_hit_count())
 
 ---
 
+当前的 [examples/python_demo.py](/Users/mac/Desktop/redis-rate-limiter/examples/python_demo.py) 演示的是更贴近真实业务的一条链路：
+
+```text
+Python 业务代码
+  -> 先做限流(Redis)
+  -> 通过后再执行业务逻辑
+  -> 模拟 PostgreSQL 持久化
+  -> 返回业务结果
+```
+
+示例里会先对 `user:{id}:create_order` 调 `allow()`，放行后再调用 `FakeOrderRepository.create_order()`。
+这个示例的重点不是 HTTP，而是说明普通 Python 脚本、worker 或消费程序的推荐接法也是：
+
+- 启动时初始化 Redis 连接池和限流器
+- 每次业务动作先计算限流 key
+- 调 `allow()` 判断是否放行
+- 放行后再访问数据库或其他下游
+
+---
+
 ## 12.3 新增功能
 
 这次补充的工程化能力包括：
 
-- 增加 [examples/fastapi_demo.py](/Users/mac/Desktop/redis-rate-limiter/examples/fastapi_demo.py)，提供真实 HTTP 接入样例
+- 增加 [examples/fastapi_demo.py](/Users/mac/Desktop/redis-rate-limiter/examples/fastapi_demo.py)，提供带业务接口和下游持久化的 HTTP 接入样例
 - 增加 Docker Compose `test` 服务，可直接在容器内执行功能验证
 - 增加 Docker Compose `pytest` 服务，可直接执行集成测试
 - 增加 [tests/verify_functionality.py](/Users/mac/Desktop/redis-rate-limiter/tests/verify_functionality.py)，覆盖正常限流和 Redis 故障降级
@@ -825,7 +845,21 @@ latency_us avg=427.13 p50=352.07 p95=846.10 p99=1634.98
 
 ## 12.7 FastAPI 接入
 
-这部分的作用是把组件从“库”扩展成“可接入业务服务的限流能力”。
+这部分的作用是把组件从“库”扩展成“可接入真实业务服务的限流能力”。
+
+当前 [examples/fastapi_demo.py](/Users/mac/Desktop/redis-rate-limiter/examples/fastapi_demo.py) 演示的是下面这条生产链路：
+
+```text
+Client
+  -> Nginx
+  -> App实例
+  -> 先做限流(Redis)
+  -> 通过后再执行业务逻辑
+  -> MySQL/PostgreSQL/其他下游
+  -> 返回业务结果
+```
+
+在示例里，数据库部分由 `FakeOrderRepository` 模拟，后端名默认显示为 `mock-postgresql`。
 
 启动方式：
 
@@ -847,14 +881,24 @@ curl -sS http://127.0.0.1:8000/rate-limit/check \
   -d '{"key":"login:user:123","tokens_needed":1}'
 ```
 
+请求业务接口：
+
+```bash
+curl -sS http://127.0.0.1:8000/orders \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id":"42","sku":"sku-demo","quantity":1}'
+```
+
 接口说明：
 
 - `GET /healthz`
-  返回 Redis 是否健康、当前降级模式
+  返回 Redis 是否健康、当前降级模式、当前持久化后端
 - `GET /metrics`
-  返回 Prometheus 风格指标，包括请求总数、允许数、拒绝数、Redis 错误数、降级次数和耗时累计
+  返回 Prometheus 风格指标，包括请求总数、允许数、拒绝数、Redis 错误数、降级次数、下游调用次数和耗时累计
 - `POST /rate-limit/check`
   返回 `allowed`、`remaining`、`retry_after_ms`、`backend_status`、`redis_error_count`、`fallback_hit_count`
+- `POST /orders`
+  先按 `user:{user_id}:create_order` 执行限流，放行后再模拟订单创建和持久化，返回业务结果和嵌套的 `rate_limit` 信息
 
 查看指标：
 
@@ -868,13 +912,14 @@ curl -sS http://127.0.0.1:8000/metrics
 demo_rate_limit_requests_total 0
 demo_rate_limit_allowed_total 0
 demo_rate_limit_denied_total 0
+demo_downstream_calls_total 0
 demo_redis_health 1
 ```
 
 实际验证结果：
 
 ```text
-{"ok":true,"redis_healthy":true,"fallback_mode":"LocalTokenBucket"}
+{"ok":true,"redis_healthy":true,"fallback_mode":"LocalTokenBucket","persistence_backend":"mock-postgresql"}
 ```
 
 `backend_status` 语义：
@@ -904,45 +949,58 @@ CI 配置文件在 [.github/workflows/ci.yml](/Users/mac/Desktop/redis-rate-limi
 ## 12.9 架构图
 
 ```text
-                +------------------------+
-                |  FastAPI Service       |
-                | /healthz /metrics      |
-                | /rate-limit/check      |
-                +-----------+------------+
-                            |
-                            v
-                +------------------------+
-                |   pybind11 bindings    |
-                |   redis_limiter.so     |
-                +-----------+------------+
-                            |
-                            v
-        +---------------------------------------------+
-        |              C++ Rate Limiter               |
-        | SlidingWindow / TokenBucket / Resilient TB  |
-        +----------------------+----------------------+
-                               |
-                               v
-                    +----------------------+
-                    |   RedisPool (C++)    |
-                    | connection reuse     |
-                    | health check         |
-                    +----------+-----------+
-                               |
-                               v
-                    +----------------------+
-                    |        Redis         |
-                    | Lua atomic scripts   |
-                    +----------------------+
+                +-------------------------------+
+                |          FastAPI App          |
+                | /healthz /metrics             |
+                | /rate-limit/check /orders     |
+                +---------------+---------------+
+                                |
+                                v
+                +-------------------------------+
+                |      pybind11 bindings        |
+                |       redis_limiter.so        |
+                +---------------+---------------+
+                                |
+                                v
+        +----------------------------------------------------+
+        |               C++ Rate Limiter                     |
+        | SlidingWindow / TokenBucket / Resilient TB         |
+        +------------------------+---------------------------+
+                                 |
+                                 v
+                    +---------------------------+
+                    |     RedisPool (C++)       |
+                    | connection reuse          |
+                    | health check              |
+                    +-------------+-------------+
+                                  |
+                                  v
+                    +---------------------------+
+                    |           Redis           |
+                    |    Lua atomic scripts     |
+                    +-------------+-------------+
+                                  |
+                    allowed=true  |
+                                  v
+                    +---------------------------+
+                    |      Business Logic       |
+                    |    create order flow      |
+                    +-------------+-------------+
+                                  |
+                                  v
+                    +---------------------------+
+                    | Mock PostgreSQL / DB      |
+                    | FakeOrderRepository       |
+                    +---------------------------+
 
 Redis 不可用时：
-FastAPI -> ResilientTokenBucketLimiter -> LocalTokenBucket fallback
+FastAPI -> ResilientTokenBucketLimiter -> LocalTokenBucket / FailOpen / FailClosed
 ```
 
 这张图主要说明三件事：
 
 - Python 服务怎么接入 C++ 扩展
-- Lua + Redis 为什么能保证原子扣减
+- 真实业务里为什么应该先限流再访问数据库
 - Redis 异常时为什么还能保留单机限流保护
 
 ---
