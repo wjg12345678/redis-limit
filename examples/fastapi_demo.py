@@ -4,7 +4,7 @@ import time
 from typing import Literal
 
 import redis_limiter
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
@@ -36,6 +36,14 @@ def fallback_mode_name(mode: redis_limiter.FallbackMode) -> str:
     return "LocalTokenBucket"
 
 
+def backend_status_name(status: redis_limiter.BackendStatus) -> str:
+    if status == redis_limiter.BackendStatus.Unavailable:
+        return "Unavailable"
+    if status == redis_limiter.BackendStatus.Fallback:
+        return "Fallback"
+    return "Healthy"
+
+
 class RateLimitRequest(BaseModel):
     key: str = Field(..., min_length=1)
     tokens_needed: int = Field(default=1, ge=1)
@@ -53,12 +61,21 @@ class RateLimitResponse(BaseModel):
     fallback_hit_count: int
 
 
-def backend_status_name(status: redis_limiter.BackendStatus) -> str:
-    if status == redis_limiter.BackendStatus.Unavailable:
-        return "Unavailable"
-    if status == redis_limiter.BackendStatus.Fallback:
-        return "Fallback"
-    return "Healthy"
+class CreateOrderRequest(BaseModel):
+    user_id: str = Field(..., min_length=1)
+    sku: str = Field(..., min_length=1)
+    quantity: int = Field(default=1, ge=1)
+
+
+class CreateOrderResponse(BaseModel):
+    order_id: str
+    status: Literal["created"]
+    user_id: str
+    sku: str
+    quantity: int
+    inventory_reserved: bool
+    persistence_backend: str
+    rate_limit: RateLimitResponse
 
 
 class DemoMetrics:
@@ -69,6 +86,7 @@ class DemoMetrics:
         self.denied_total = 0
         self.redis_error_total = 0
         self.fallback_total = 0
+        self.downstream_calls_total = 0
         self.request_duration_seconds_sum = 0.0
 
     def observe(
@@ -77,6 +95,7 @@ class DemoMetrics:
         allowed: bool,
         redis_error_delta: int,
         fallback_delta: int,
+        downstream_called: bool,
         duration_seconds: float,
     ) -> None:
         with self._lock:
@@ -87,6 +106,8 @@ class DemoMetrics:
                 self.denied_total += 1
             self.redis_error_total += max(0, redis_error_delta)
             self.fallback_total += max(0, fallback_delta)
+            if downstream_called:
+                self.downstream_calls_total += 1
             self.request_duration_seconds_sum += duration_seconds
 
     def render_prometheus(self, *, redis_healthy: bool, fallback_mode: str) -> str:
@@ -112,6 +133,9 @@ class DemoMetrics:
                 "# HELP demo_rate_limit_fallback_total Total number of fallback executions observed by the API.",
                 "# TYPE demo_rate_limit_fallback_total counter",
                 f"demo_rate_limit_fallback_total {self.fallback_total}",
+                "# HELP demo_downstream_calls_total Total number of downstream persistence calls.",
+                "# TYPE demo_downstream_calls_total counter",
+                f"demo_downstream_calls_total {self.downstream_calls_total}",
                 "# HELP demo_rate_limit_request_duration_seconds_sum Sum of request durations for the rate-limit API.",
                 "# TYPE demo_rate_limit_request_duration_seconds_sum counter",
                 f"demo_rate_limit_request_duration_seconds_sum {self.request_duration_seconds_sum:.6f}",
@@ -123,6 +147,47 @@ class DemoMetrics:
                 f"demo_fallback_mode {fallback_value}",
             ]
         return "\n".join(lines) + "\n"
+
+
+class FakeOrderRepository:
+    def __init__(self, backend_name: str = "mock-postgresql") -> None:
+        self.backend_name = backend_name
+        self._lock = threading.Lock()
+        self._sequence = 0
+
+    def create_order(self, *, user_id: str, sku: str, quantity: int) -> dict[str, object]:
+        with self._lock:
+            self._sequence += 1
+            order_id = f"ord-{self._sequence:06d}"
+        return {
+            "order_id": order_id,
+            "status": "created",
+            "user_id": user_id,
+            "sku": sku,
+            "quantity": quantity,
+            "inventory_reserved": True,
+            "persistence_backend": self.backend_name,
+        }
+
+
+def build_rate_limit_response(
+    *,
+    limiter: redis_limiter.ResilientTokenBucketLimiter,
+    result: redis_limiter.RateLimitResult,
+    redis_error_count: int,
+    fallback_hit_count: int,
+) -> RateLimitResponse:
+    return RateLimitResponse(
+        allowed=result.allowed,
+        current_count=result.current_count,
+        remaining=result.remaining,
+        reset_after_ms=result.reset_after_ms,
+        retry_after_ms=result.retry_after_ms,
+        backend_status=backend_status_name(result.backend_status),
+        fallback_mode=fallback_mode_name(limiter.fallback_mode()),
+        redis_error_count=redis_error_count,
+        fallback_hit_count=fallback_hit_count,
+    )
 
 
 def create_app(
@@ -154,9 +219,11 @@ def create_app(
     )
 
     metrics = DemoMetrics()
+    repository = FakeOrderRepository()
     app.state.pool = pool
     app.state.limiter = limiter
     app.state.metrics = metrics
+    app.state.repository = repository
 
     @app.get("/healthz")
     def healthz() -> dict[str, object]:
@@ -165,6 +232,7 @@ def create_app(
             "ok": True,
             "redis_healthy": redis_healthy,
             "fallback_mode": fallback_mode_name(limiter.fallback_mode()),
+            "persistence_backend": repository.backend_name,
         }
 
     @app.post("/rate-limit/check", response_model=RateLimitResponse)
@@ -179,19 +247,62 @@ def create_app(
             allowed=result.allowed,
             redis_error_delta=after_redis_errors - before_redis_errors,
             fallback_delta=after_fallback_hits - before_fallback_hits,
+            downstream_called=False,
             duration_seconds=time.perf_counter() - started_at,
         )
-        return RateLimitResponse(
-            allowed=result.allowed,
-            current_count=result.current_count,
-            remaining=result.remaining,
-            reset_after_ms=result.reset_after_ms,
-            retry_after_ms=result.retry_after_ms,
-            backend_status=backend_status_name(result.backend_status),
-            fallback_mode=fallback_mode_name(limiter.fallback_mode()),
+        return build_rate_limit_response(
+            limiter=limiter,
+            result=result,
             redis_error_count=after_redis_errors,
             fallback_hit_count=after_fallback_hits,
         )
+
+    @app.post("/orders", response_model=CreateOrderResponse)
+    def create_order(request: CreateOrderRequest) -> CreateOrderResponse:
+        rate_limit_key = f"user:{request.user_id}:create_order"
+        before_redis_errors = limiter.redis_error_count()
+        before_fallback_hits = limiter.fallback_hit_count()
+        started_at = time.perf_counter()
+
+        result = limiter.allow(rate_limit_key, request.quantity)
+        after_redis_errors = limiter.redis_error_count()
+        after_fallback_hits = limiter.fallback_hit_count()
+        rate_limit = build_rate_limit_response(
+            limiter=limiter,
+            result=result,
+            redis_error_count=after_redis_errors,
+            fallback_hit_count=after_fallback_hits,
+        )
+
+        if not result.allowed:
+            metrics.observe(
+                allowed=False,
+                redis_error_delta=after_redis_errors - before_redis_errors,
+                fallback_delta=after_fallback_hits - before_fallback_hits,
+                downstream_called=False,
+                duration_seconds=time.perf_counter() - started_at,
+            )
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "message": "rate limit exceeded",
+                    "rate_limit": rate_limit.model_dump(),
+                },
+            )
+
+        persisted = repository.create_order(
+            user_id=request.user_id,
+            sku=request.sku,
+            quantity=request.quantity,
+        )
+        metrics.observe(
+            allowed=True,
+            redis_error_delta=after_redis_errors - before_redis_errors,
+            fallback_delta=after_fallback_hits - before_fallback_hits,
+            downstream_called=True,
+            duration_seconds=time.perf_counter() - started_at,
+        )
+        return CreateOrderResponse(rate_limit=rate_limit, **persisted)
 
     @app.get("/metrics", response_class=PlainTextResponse)
     def metrics_endpoint() -> PlainTextResponse:
